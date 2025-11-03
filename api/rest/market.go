@@ -58,8 +58,8 @@ func (c *Market) GetTicker(req requests.GetTickers) (response responses.Ticker, 
 // Retrieve index tickers.
 //
 // https://www.okex.com/docs-v5/en/#rest-api-market-data-get-index-tickers
-func (c *Market) GetIndexTickers(req requests.GetIndexTickers) (response responses.Ticker, err error) {
-	p := "/api/v5/market/ticker"
+func (c *Market) GetIndexTickers(req requests.GetIndexTickers) (response responses.IndexTicker, err error) {
+	p := "/api/v5/market/index-tickers"
 	m := okex.S2M(req)
 	res, err := c.client.Do(http.MethodGet, p, false, m)
 	if err != nil {
