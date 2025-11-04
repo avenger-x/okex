@@ -27,6 +27,8 @@ type (
 		CtType    okex.ContractType    `json:"ctType,omitempty"`
 		Alias     okex.AliasType       `json:"alias,omitempty"`
 		State     okex.InstrumentState `json:"state"`
+		MaxLmtSz  string               `json:"maxLmtSz,omitempty"`
+		MaxMktSz  string               `json:"maxMktSz,omitempty"`
 	}
 	DeliveryExerciseHistory struct {
 		Details []*DeliveryExerciseHistoryDetails `json:"details"`
