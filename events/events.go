@@ -19,6 +19,7 @@ type (
 	Argument struct {
 		arg        map[string]interface{}
 		untypedArg []interface{}
+		buf        []byte
 	}
 	Success struct {
 		Code int            `json:"code,omitempty,string"`
@@ -62,6 +63,11 @@ func (a *Argument) UnmarshalJSON(buf []byte) error {
 	if json.Unmarshal(buf, &a.arg) != nil {
 		return json.Unmarshal(buf, &a.untypedArg)
 	}
+	a.buf = buf
 
 	return nil
+}
+
+func (a *Argument) GetBuf() []byte {
+	return a.buf
 }
