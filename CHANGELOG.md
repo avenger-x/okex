@@ -2,6 +2,13 @@ Changelog
 =========
 All notable changes to this project will be documented in this file.
 
+Unreleased
+-------------
+
+### Changed
+
+- Changed `OrderBookEntity.DepthPrice` and `Size` from `float64` to `string` for REST and WebSocket order books to preserve the exchange's original precision and trailing zeros.
+
 v1.1.5-alpha
 -------------
 

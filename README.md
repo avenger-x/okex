@@ -95,10 +95,10 @@ func main() {
       log.Printf("[Event]\t%s", ch)
       for _, p := range i.Books {
         for i := len(p.Asks) - 1; i >= 0; i-- {
-          log.Printf("\t\tAsk\t%+v", p.Asks[i])
+          log.Printf("\t\tAsk\tprice=%s size=%s", p.Asks[i].DepthPrice, p.Asks[i].Size)
         }
         for _, bid := range p.Bids {
-          log.Printf("\t\tBid\t%+v", bid)
+          log.Printf("\t\tBid\tprice=%s size=%s", bid.DepthPrice, bid.Size)
         }
       }
     case b := <-client.Ws.DoneChan:
@@ -108,6 +108,11 @@ func main() {
   }
 }
 ```
+
+REST and WebSocket order books share `OrderBookEntity`. Its `DepthPrice` and `Size` fields are strings that preserve
+the exchange's exact decimal representation, including very small prices, large quantities, and trailing zeros
+(for example, `0.000000000123456789`, `123456789.123456789`, and `1.23000000`). `LiquidatedOrder` and `OrderNumbers`
+remain integers. Code that previously used these fields as `float64` must now handle strings explicitly.
 
 Supporting APIs
 ---------------
@@ -133,7 +138,8 @@ Features
 --------
 
 * All [requests](/requests), [responses](/responses), and [events](events) are well typed and will convert into the
-  language built-in types instead of using API's strings. *Note that zero values will be replaced with non-existing
+  language built-in types instead of using API's strings, except order book prices and quantities, which preserve
+  the original strings. *Note that zero values will be replaced with non-existing
   data.*
 * Fully automated authorization steps for both [REST](/api/rest) and [WS](/api/ws)
 * To receive websocket events you can choose [RawEventChan](/api/ws/client.go#L25)

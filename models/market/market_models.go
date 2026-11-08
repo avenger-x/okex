@@ -49,8 +49,8 @@ type (
 		TS       okex.JSONTime      `json:"ts"`
 	}
 	OrderBookEntity struct {
-		DepthPrice      float64
-		Size            float64
+		DepthPrice      string
+		Size            string
 		LiquidatedOrder int
 		OrderNumbers    int
 	}
@@ -112,14 +112,8 @@ func (o *OrderBookEntity) UnmarshalJSON(buf []byte) error {
 	if g, e := len(tmp), wantLen; g != e {
 		return fmt.Errorf("wrong number of fields in OrderBookEntity: %d != %d", g, e)
 	}
-	o.DepthPrice, err = strconv.ParseFloat(dp, 64)
-	if err != nil {
-		return err
-	}
-	o.Size, err = strconv.ParseFloat(s, 64)
-	if err != nil {
-		return err
-	}
+	o.DepthPrice = dp
+	o.Size = s
 	o.LiquidatedOrder, err = strconv.Atoi(lo)
 	if err != nil {
 		return err

@@ -65,5 +65,13 @@ func main() {
 		log.Printf("Received order book update: %+v\n", update)
 		insId, _ := update.Arg.Get("instId")
 		log.Printf("Instrument ID: %s\n", insId)
+		for _, book := range update.Books {
+			for _, ask := range book.Asks {
+				log.Printf("Ask price: %s, size: %s\n", ask.DepthPrice, ask.Size)
+			}
+			for _, bid := range book.Bids {
+				log.Printf("Bid price: %s, size: %s\n", bid.DepthPrice, bid.Size)
+			}
+		}
 	}
 }
