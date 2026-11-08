@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/amir-the-h/okex"
@@ -43,7 +44,9 @@ func NewPublic(c *ClientWs) *Public {
 func (c *Public) Instruments(req requests.Instruments, ch ...chan *public.Instruments) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.iCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"instruments"}, m)
 }
@@ -54,7 +57,9 @@ func (c *Public) Instruments(req requests.Instruments, ch ...chan *public.Instru
 func (c *Public) UInstruments(req requests.Instruments, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.iCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"instruments"}, m)
 }
@@ -66,7 +71,9 @@ func (c *Public) UInstruments(req requests.Instruments, rCh ...bool) error {
 func (c *Public) Tickers(req requests.Tickers, ch ...chan *public.Tickers) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.tCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"tickers"}, m)
 }
@@ -77,7 +84,9 @@ func (c *Public) Tickers(req requests.Tickers, ch ...chan *public.Tickers) error
 func (c *Public) UTickers(req requests.Tickers, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.tCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"tickers"}, m)
 }
@@ -89,7 +98,9 @@ func (c *Public) UTickers(req requests.Tickers, rCh ...bool) error {
 func (c *Public) OpenInterest(req requests.OpenInterest, ch ...chan *public.OpenInterest) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.oiCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"open-interest"}, m)
 }
@@ -100,7 +111,9 @@ func (c *Public) OpenInterest(req requests.OpenInterest, ch ...chan *public.Open
 func (c *Public) UOpenInterest(req requests.OpenInterest, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.oiCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"open-interest"}, m)
 }
@@ -112,7 +125,9 @@ func (c *Public) UOpenInterest(req requests.OpenInterest, rCh ...bool) error {
 func (c *Public) Candlesticks(req requests.Candlesticks, ch ...chan *public.Candlesticks) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.cCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{}, m)
 }
@@ -123,7 +138,9 @@ func (c *Public) Candlesticks(req requests.Candlesticks, ch ...chan *public.Cand
 func (c *Public) UCandlesticks(req requests.Candlesticks, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.cCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{}, m)
 }
@@ -135,7 +152,9 @@ func (c *Public) UCandlesticks(req requests.Candlesticks, rCh ...bool) error {
 func (c *Public) Trades(req requests.Trades, ch ...chan *public.Trades) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.trCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"trades"}, m)
 }
@@ -146,7 +165,9 @@ func (c *Public) Trades(req requests.Trades, ch ...chan *public.Trades) error {
 func (c *Public) UTrades(req requests.Trades, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.trCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"trades"}, m)
 }
@@ -160,7 +181,9 @@ func (c *Public) UTrades(req requests.Trades, rCh ...bool) error {
 func (c *Public) EstimatedDeliveryExercisePrice(req requests.EstimatedDeliveryExercisePrice, ch ...chan *public.EstimatedDeliveryExercisePrice) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.edepCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"estimated-price"}, m)
 }
@@ -171,7 +194,9 @@ func (c *Public) EstimatedDeliveryExercisePrice(req requests.EstimatedDeliveryEx
 func (c *Public) UEstimatedDeliveryExercisePrice(req requests.EstimatedDeliveryExercisePrice, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.edepCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"estimated-price"}, m)
 }
@@ -183,7 +208,9 @@ func (c *Public) UEstimatedDeliveryExercisePrice(req requests.EstimatedDeliveryE
 func (c *Public) MarkPrice(req requests.MarkPrice, ch ...chan *public.MarkPrice) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.mpCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"mark-price"}, m)
 }
@@ -194,7 +221,9 @@ func (c *Public) MarkPrice(req requests.MarkPrice, ch ...chan *public.MarkPrice)
 func (c *Public) UMarkPrice(req requests.MarkPrice, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.mpCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"mark-price"}, m)
 }
@@ -207,7 +236,9 @@ func (c *Public) MarkPriceCandlesticks(req requests.MarkPriceCandlesticks, ch ..
 	m := okex.S2M(req)
 	m["channel"] = "mark-price-" + m["channel"]
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.mpcCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{}, m)
 }
@@ -219,7 +250,9 @@ func (c *Public) UMarkPriceCandlesticks(req requests.MarkPriceCandlesticks, rCh 
 	m := okex.S2M(req)
 	m["channel"] = "mark-price-" + m["channel"]
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.mpcCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{}, m)
 }
@@ -231,7 +264,9 @@ func (c *Public) UMarkPriceCandlesticks(req requests.MarkPriceCandlesticks, rCh 
 func (c *Public) PriceLimit(req requests.PriceLimit, ch ...chan *public.PriceLimit) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.plCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"price-limit"}, m)
 }
@@ -242,7 +277,9 @@ func (c *Public) PriceLimit(req requests.PriceLimit, ch ...chan *public.PriceLim
 func (c *Public) UPriceLimit(req requests.PriceLimit, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.plCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"price-limit"}, m)
 }
@@ -255,7 +292,9 @@ func (c *Public) UPriceLimit(req requests.PriceLimit, rCh ...bool) error {
 // https://www.okex.com/docs-v5/en/#websocket-api-public-channels-order-book-channel
 func (c *Public) OrderBook(reqs []requests.OrderBook, ch ...chan *public.OrderBook) error {
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.obCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	var subscriptions []map[string]string
 	for _, req := range reqs {
@@ -271,7 +310,9 @@ func (c *Public) OrderBook(reqs []requests.OrderBook, ch ...chan *public.OrderBo
 func (c *Public) UOrderBook(req requests.OrderBook, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.obCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{okex.ChannelName(req.Channel)}, m)
 }
@@ -283,7 +324,9 @@ func (c *Public) UOrderBook(req requests.OrderBook, rCh ...bool) error {
 func (c *Public) OPTIONSummary(req requests.OPTIONSummary, ch ...chan *public.OPTIONSummary) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.osCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"opt-summary"}, m)
 }
@@ -294,7 +337,9 @@ func (c *Public) OPTIONSummary(req requests.OPTIONSummary, ch ...chan *public.OP
 func (c *Public) UOPTIONSummary(req requests.OPTIONSummary, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.osCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"opt-summary"}, m)
 }
@@ -306,7 +351,9 @@ func (c *Public) UOPTIONSummary(req requests.OPTIONSummary, rCh ...bool) error {
 func (c *Public) FundingRate(req requests.FundingRate, ch ...chan *public.FundingRate) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.frCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"funding-rate"}, m)
 }
@@ -317,7 +364,9 @@ func (c *Public) FundingRate(req requests.FundingRate, ch ...chan *public.Fundin
 func (c *Public) UFundingRate(req requests.FundingRate, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.frCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"funding-rate"}, m)
 }
@@ -330,7 +379,9 @@ func (c *Public) IndexCandlesticks(req requests.IndexCandlesticks, ch ...chan *p
 	m := okex.S2M(req)
 	m["channel"] = req.Channel
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.icCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{}, m)
 }
@@ -342,7 +393,9 @@ func (c *Public) UIndexCandlesticks(req requests.IndexCandlesticks, rCh ...bool)
 	m := okex.S2M(req)
 	m["channel"] = req.Channel
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.icCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{}, m)
 }
@@ -354,7 +407,9 @@ func (c *Public) UIndexCandlesticks(req requests.IndexCandlesticks, rCh ...bool)
 func (c *Public) IndexTickers(req requests.IndexTickers, ch ...chan *public.IndexTickers) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.itCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(false, []okex.ChannelName{"index-tickers"}, m)
 }
@@ -365,12 +420,23 @@ func (c *Public) IndexTickers(req requests.IndexTickers, ch ...chan *public.Inde
 func (c *Public) UIndexTickers(req requests.IndexTickers, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.itCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(false, []okex.ChannelName{"index-tickers"}, m)
 }
 
 func (c *Public) Process(data []byte, e *events.Basic) bool {
+	return c.process(c.ctx, data, e)
+}
+
+func (c *Public) process(ctx context.Context, data []byte, e *events.Basic) bool {
+	c.channelMu.RLock()
+	channels := *c
+	structured := c.StructuredEventChan
+	c.channelMu.RUnlock()
+	c = &channels
 	if e.Event == "" && e.Arg != nil && e.Data != nil && len(e.Data) > 0 {
 		ch, ok := e.Arg.Get("channel")
 		if !ok {
@@ -382,11 +448,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.iCh != nil {
-				c.iCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.iCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "tickers":
@@ -394,11 +457,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.tCh != nil {
-				c.tCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.tCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "open-interest":
@@ -406,11 +466,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.oiCh != nil {
-				c.oiCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.oiCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "trades":
@@ -418,11 +475,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.trCh != nil {
-				c.trCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.trCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "estimated-price":
@@ -430,11 +484,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.edepCh != nil {
-				c.edepCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.edepCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "mark-price":
@@ -442,11 +493,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.mpCh != nil {
-				c.mpCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.mpCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "price-limit":
@@ -454,11 +502,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.plCh != nil {
-				c.plCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.plCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "opt-summary":
@@ -466,11 +511,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.osCh != nil {
-				c.osCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.osCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "funding-rate":
@@ -478,11 +520,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.frCh != nil {
-				c.frCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.frCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		case "index-tickers":
@@ -490,11 +529,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 			if err := json.Unmarshal(data, &e); err != nil {
 				return false
 			}
-			if c.itCh != nil {
-				c.itCh <- &e
-			}
-			if c.StructuredEventChan != nil {
-				c.StructuredEventChan <- e
+			if deliver(ctx, c.itCh, &e) {
+				deliver(ctx, structured, interface{}(e))
 			}
 			return true
 		default:
@@ -504,11 +540,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 				if err := json.Unmarshal(data, &e); err != nil {
 					return false
 				}
-				if c.mpcCh != nil {
-					c.mpcCh <- &e
-				}
-				if c.StructuredEventChan != nil {
-					c.StructuredEventChan <- e
+				if deliver(ctx, c.mpcCh, &e) {
+					deliver(ctx, structured, interface{}(e))
 				}
 				return true
 			}
@@ -517,11 +550,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 				if err := json.Unmarshal(data, &e); err != nil {
 					return false
 				}
-				if c.icCh != nil {
-					c.icCh <- &e
-				}
-				if c.StructuredEventChan != nil {
-					c.StructuredEventChan <- e
+				if deliver(ctx, c.icCh, &e) {
+					deliver(ctx, structured, interface{}(e))
 				}
 				return true
 			}
@@ -530,11 +560,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 				if err := json.Unmarshal(data, &e); err != nil {
 					return false
 				}
-				if c.cCh != nil {
-					c.cCh <- &e
-				}
-				if c.StructuredEventChan != nil {
-					c.StructuredEventChan <- e
+				if deliver(ctx, c.cCh, &e) {
+					deliver(ctx, structured, interface{}(e))
 				}
 				return true
 			}
@@ -543,11 +570,8 @@ func (c *Public) Process(data []byte, e *events.Basic) bool {
 				if err := json.Unmarshal(data, &e); err != nil {
 					return false
 				}
-				if c.obCh != nil {
-					c.obCh <- &e
-				}
-				if c.StructuredEventChan != nil {
-					c.StructuredEventChan <- e
+				if deliver(ctx, c.obCh, &e) {
+					deliver(ctx, structured, interface{}(e))
 				}
 				return true
 			}

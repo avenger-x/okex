@@ -11,6 +11,9 @@ import (
 	"log"
 	"net/http"
 	_ "net/http/pprof"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -27,11 +30,14 @@ func main() {
 	apiKey := ""
 	secretKey := ""
 	passphrase := ""
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 	client, err := api.NewClient(ctx, apiKey, secretKey, passphrase, okex.NormalServer)
 	if err != nil {
 		log.Fatalln(err)
 	}
+
+	defer client.Ws.Close()
 
 	orderBookRequests := []requests.OrderBook{
 		{InstID: "BTC-USDT", Channel: "books"},
@@ -61,16 +67,23 @@ func main() {
 	}
 
 	// Listen for updates
-	for update := range obCh {
-		log.Printf("Received order book update: %+v\n", update)
-		insId, _ := update.Arg.Get("instId")
-		log.Printf("Instrument ID: %s\n", insId)
-		for _, book := range update.Books {
-			for _, ask := range book.Asks {
-				log.Printf("Ask price: %s, size: %s\n", ask.DepthPrice, ask.Size)
-			}
-			for _, bid := range book.Bids {
-				log.Printf("Bid price: %s, size: %s\n", bid.DepthPrice, bid.Size)
+	for {
+		select {
+		case <-ctx.Done():
+			client.Ws.Wait()
+			return
+		case update := <-obCh:
+			log.Printf("Received order book update: %+v\n", update)
+			insId, _ := update.Arg.Get("instId")
+			log.Printf("Instrument ID: %s\n", insId)
+			for _, book := range update.Books {
+				log.Printf("Sequence: %d, previous sequence: %d\n", book.SeqID, book.PrevSeqID)
+				for _, ask := range book.Asks {
+					log.Printf("Ask price: %s, size: %s\n", ask.DepthPrice, ask.Size)
+				}
+				for _, bid := range book.Bids {
+					log.Printf("Bid price: %s, size: %s\n", bid.DepthPrice, bid.Size)
+				}
 			}
 		}
 	}

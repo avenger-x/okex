@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/amir-the-h/okex"
 	"github.com/amir-the-h/okex/events"
@@ -31,7 +32,9 @@ func NewPrivate(c *ClientWs) *Private {
 func (c *Private) Account(req requests.Account, ch ...chan *private.Account) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.aCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(true, []okex.ChannelName{"account"}, m)
 }
@@ -42,7 +45,9 @@ func (c *Private) Account(req requests.Account, ch ...chan *private.Account) err
 func (c *Private) UAccount(req requests.Account, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.aCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(true, []okex.ChannelName{"account"}, m)
 }
@@ -54,7 +59,9 @@ func (c *Private) UAccount(req requests.Account, rCh ...bool) error {
 func (c *Private) Position(req requests.Position, ch ...chan *private.Position) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.pCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(true, []okex.ChannelName{"positions"}, m)
 }
@@ -65,7 +72,9 @@ func (c *Private) Position(req requests.Position, ch ...chan *private.Position) 
 func (c *Private) UPosition(req requests.Position, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.pCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(true, []okex.ChannelName{"positions"}, m)
 }
@@ -77,7 +86,9 @@ func (c *Private) UPosition(req requests.Position, rCh ...bool) error {
 func (c *Private) BalanceAndPosition(ch ...chan *private.BalanceAndPosition) error {
 	m := make(map[string]string)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.bnpCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(true, []okex.ChannelName{"balance_and_position"}, m)
 }
@@ -88,7 +99,9 @@ func (c *Private) BalanceAndPosition(ch ...chan *private.BalanceAndPosition) err
 func (c *Private) UBalanceAndPosition(rCh ...bool) error {
 	m := make(map[string]string)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.bnpCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(true, []okex.ChannelName{"balance_and_position"}, m)
 }
@@ -100,7 +113,9 @@ func (c *Private) UBalanceAndPosition(rCh ...bool) error {
 func (c *Private) Order(req requests.Order, ch ...chan *private.Order) error {
 	m := okex.S2M(req)
 	if len(ch) > 0 {
+		c.channelMu.Lock()
 		c.oCh = ch[0]
+		c.channelMu.Unlock()
 	}
 	return c.Subscribe(true, []okex.ChannelName{"orders"}, m)
 }
@@ -111,12 +126,23 @@ func (c *Private) Order(req requests.Order, ch ...chan *private.Order) error {
 func (c *Private) UOrder(req requests.Order, rCh ...bool) error {
 	m := okex.S2M(req)
 	if len(rCh) > 0 && rCh[0] {
+		c.channelMu.Lock()
 		c.oCh = nil
+		c.channelMu.Unlock()
 	}
 	return c.Unsubscribe(true, []okex.ChannelName{"orders"}, m)
 }
 
 func (c *Private) Process(data []byte, e *events.Basic) bool {
+	return c.process(c.ctx, data, e)
+}
+
+func (c *Private) process(ctx context.Context, data []byte, e *events.Basic) bool {
+	c.channelMu.RLock()
+	channels := *c
+	structured := c.StructuredEventChan
+	c.channelMu.RUnlock()
+	c = &channels
 	if e.Event == "" && e.Arg != nil && e.Data != nil && len(e.Data) > 0 {
 		ch, ok := e.Arg.Get("channel")
 		if !ok {
@@ -129,12 +155,9 @@ func (c *Private) Process(data []byte, e *events.Basic) bool {
 			if err != nil {
 				return false
 			}
-			go func() {
-				if c.aCh != nil {
-					c.aCh <- &e
-				}
-				c.StructuredEventChan <- e
-			}()
+			if deliver(ctx, c.aCh, &e) {
+				deliver(ctx, structured, interface{}(e))
+			}
 			return true
 		case "positions":
 			e := private.Position{}
@@ -142,12 +165,9 @@ func (c *Private) Process(data []byte, e *events.Basic) bool {
 			if err != nil {
 				return false
 			}
-			go func() {
-				if c.pCh != nil {
-					c.pCh <- &e
-				}
-				c.StructuredEventChan <- e
-			}()
+			if deliver(ctx, c.pCh, &e) {
+				deliver(ctx, structured, interface{}(e))
+			}
 			return true
 		case "balance_and_position":
 			e := private.BalanceAndPosition{}
@@ -155,12 +175,9 @@ func (c *Private) Process(data []byte, e *events.Basic) bool {
 			if err != nil {
 				return false
 			}
-			go func() {
-				if c.bnpCh != nil {
-					c.bnpCh <- &e
-				}
-				c.StructuredEventChan <- e
-			}()
+			if deliver(ctx, c.bnpCh, &e) {
+				deliver(ctx, structured, interface{}(e))
+			}
 			return true
 		case "orders":
 			e := private.Order{}
@@ -168,12 +185,9 @@ func (c *Private) Process(data []byte, e *events.Basic) bool {
 			if err != nil {
 				return false
 			}
-			go func() {
-				if c.oCh != nil {
-					c.oCh <- &e
-				}
-				c.StructuredEventChan <- e
-			}()
+			if deliver(ctx, c.oCh, &e) {
+				deliver(ctx, structured, interface{}(e))
+			}
 			return true
 		}
 	}

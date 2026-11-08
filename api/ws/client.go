@@ -7,19 +7,22 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/amir-the-h/okex"
 	"github.com/amir-the-h/okex/events"
 	"github.com/gorilla/websocket"
-	"io"
-	"net/http"
-	"sync"
-	"time"
 )
 
-// ClientWs is the websocket api client
-//
-// https://www.okex.com/docs-v5/en/#websocket-api
+// ClientWs is the websocket API client. Configure channels before connecting or
+// use the setters to change them while connected. The caller owns event channels.
 type ClientWs struct {
+	// Cancel cancels the client and waits for all connection workers and dispatches.
 	Cancel              context.CancelFunc
 	DoneChan            chan interface{}
 	StructuredEventChan chan interface{}
@@ -29,21 +32,43 @@ type ClientWs struct {
 	UnsubscribeCh       chan *events.Unsubscribe
 	LoginChan           chan *events.Login
 	SuccessChan         chan *events.Success
-	sendChan            map[bool]chan []byte
-	url                 map[bool]okex.BaseURL
-	conn                map[bool]*websocket.Conn
-	dialer              *websocket.Dialer
-	apiKey              string
-	secretKey           []byte
-	passphrase          string
-	lastTransmit        map[bool]*time.Time
-	mu                  map[bool]*sync.RWMutex
-	AuthRequested       *time.Time
-	Authorized          bool
-	Private             *Private
-	Public              *Public
-	Trade               *Trade
-	ctx                 context.Context
+	// Use IsAuthorized for concurrent access to authorization state.
+	AuthRequested *time.Time
+	Authorized    bool
+	Private       *Private
+	Public        *Public
+	Trade         *Trade
+	ctx           context.Context
+	done          chan struct{}
+	wg            sync.WaitGroup
+	mu            sync.Mutex
+	channelMu     sync.RWMutex
+	authMu        sync.RWMutex
+	authError     error
+	changed       chan struct{}
+	running       map[bool]bool
+	sessions      map[bool]*connection
+	subscriptions map[bool]map[string]map[string]string
+	url           map[bool]okex.BaseURL
+	dialer        *websocket.Dialer
+	apiKey        string
+	secretKey     []byte
+	passphrase    string
+}
+
+type connection struct {
+	conn         *websocket.Conn
+	ctx          context.Context
+	cancel       context.CancelFunc
+	send         chan outgoing
+	lastActivity atomic.Int64
+}
+
+type outgoing struct {
+	data   []byte
+	op     okex.Operation
+	args   []map[string]string
+	result chan error
 }
 
 const (
@@ -53,392 +78,517 @@ const (
 	PingPeriod = (pongWait * 8) / 10
 )
 
-// NewClient returns a pointer to a fresh ClientWs
-func NewClient(ctx context.Context, apiKey, secretKey, passphrase string, url map[bool]okex.BaseURL) *ClientWs {
+func NewClient(ctx context.Context, apiKey, secretKey, passphrase string, urls map[bool]okex.BaseURL) *ClientWs {
 	ctx, cancel := context.WithCancel(ctx)
 	c := &ClientWs{
-		apiKey:       apiKey,
-		secretKey:    []byte(secretKey),
-		passphrase:   passphrase,
-		ctx:          ctx,
-		Cancel:       cancel,
-		url:          url,
-		sendChan:     map[bool]chan []byte{true: make(chan []byte, 3), false: make(chan []byte, 3)},
-		DoneChan:     make(chan interface{}),
-		conn:         make(map[bool]*websocket.Conn),
-		dialer:       websocket.DefaultDialer,
-		lastTransmit: make(map[bool]*time.Time),
-		mu:           map[bool]*sync.RWMutex{true: {}, false: {}},
+		apiKey: apiKey, secretKey: []byte(secretKey), passphrase: passphrase,
+		ctx: ctx, done: make(chan struct{}), changed: make(chan struct{}),
+		url:     map[bool]okex.BaseURL{false: urls[false], true: urls[true]},
+		running: make(map[bool]bool), sessions: make(map[bool]*connection),
+		subscriptions: map[bool]map[string]map[string]string{false: {}, true: {}},
+		DoneChan:      make(chan interface{}, 1), dialer: websocket.DefaultDialer,
 	}
 	c.Private = NewPrivate(c)
 	c.Public = NewPublic(c)
 	c.Trade = NewTrade(c)
+	c.Cancel = func() { cancel(); c.Wait() }
+	go func() {
+		<-ctx.Done()
+		c.mu.Lock()
+		for _, s := range c.sessions {
+			s.cancel()
+			_ = s.conn.Close()
+		}
+		c.mu.Unlock()
+		c.wg.Wait()
+		// Completion must never depend on a DoneChan consumer.
+		select {
+		case c.DoneChan <- "cancelled":
+		default:
+		}
+		close(c.done)
+	}()
 	return c
 }
 
-// Connect into the server
-//
-// https://www.okex.com/docs-v5/en/#websocket-api-connect
+// Close cancels the client, closes sockets, and waits for workers and dispatches.
+// It does not close caller-owned event channels. It is safe to call repeatedly.
+func (c *ClientWs) Close() error {
+	c.Cancel()
+	return nil
+}
+
+// Wait waits for shutdown, including when the parent context was cancelled.
+func (c *ClientWs) Wait() { <-c.done }
+
+// Connect establishes a connection, retrying until connected or cancelled.
+// One supervisor per endpoint also reconnects and restores subscriptions.
 func (c *ClientWs) Connect(p bool) error {
-	if c.conn[p] != nil {
-		return nil
-	}
-	err := c.dial(p)
-	if err == nil {
-		return nil
-	}
-	ticker := time.NewTicker(redialTick)
-	defer ticker.Stop()
+	c.mu.Lock()
 	for {
-		select {
-		case <-ticker.C:
-			err = c.dial(p)
-			if err == nil {
-				return nil
-			}
-		case <-c.ctx.Done():
-			return c.handleCancel("connect")
+		if err := c.ctx.Err(); err != nil {
+			c.mu.Unlock()
+			return err
 		}
+		if s := c.sessions[p]; s != nil && s.ctx.Err() == nil {
+			c.mu.Unlock()
+			return nil
+		}
+		if !c.running[p] {
+			c.running[p] = true
+			c.wg.Add(1)
+			go c.run(p)
+		}
+		changed := c.changed
+		c.mu.Unlock()
+		select {
+		case <-c.ctx.Done():
+			return c.ctx.Err()
+		case <-changed:
+		}
+		c.mu.Lock()
 	}
 }
 
-// Login
-//
-// https://www.okex.com/docs-v5/en/#websocket-api-login
-func (c *ClientWs) Login() error {
-	if c.Authorized {
-		return nil
-	}
-	if c.AuthRequested != nil && time.Since(*c.AuthRequested).Seconds() < 30 {
-		return nil
-	}
-	now := time.Now()
-	c.AuthRequested = &now
-	method := http.MethodGet
-	path := "/users/self/verify"
-	ts, sign := c.sign(method, path)
-	args := []map[string]string{
-		{
-			"apiKey":     c.apiKey,
-			"passphrase": c.passphrase,
-			"timestamp":  ts,
-			"sign":       sign,
-		},
-	}
-	return c.Send(true, okex.LoginOperation, args)
+// Login connects the private endpoint, which logs in on every connection.
+func (c *ClientWs) Login() error { return c.Connect(true) }
+
+func (c *ClientWs) IsAuthorized() bool {
+	c.authMu.RLock()
+	defer c.authMu.RUnlock()
+	return c.Authorized
 }
 
-// Subscribe
-// Users can choose to subscribe to one or more channels, and the total length of multiple channels cannot exceed 4096 bytes.
-//
-// https://www.okex.com/docs-v5/en/#websocket-api-subscribe
 func (c *ClientWs) Subscribe(p bool, ch []okex.ChannelName, args ...map[string]string) error {
 	chCount := max(len(ch), 1)
-	tmpArgs := make([]map[string]string, chCount*len(args))
-
-	n := 0
+	tmpArgs := make([]map[string]string, 0, chCount*len(args))
 	for i := 0; i < chCount; i++ {
 		for _, arg := range args {
-			tmpArgs[n] = make(map[string]string)
+			item := make(map[string]string, len(arg)+1)
 			for k, v := range arg {
-				tmpArgs[n][k] = v
+				item[k] = v
 			}
 			if len(ch) > 0 {
-				tmpArgs[n]["channel"] = string(ch[i])
+				item["channel"] = string(ch[i])
 			}
-			n++
+			tmpArgs = append(tmpArgs, item)
 		}
 	}
-
 	return c.Send(p, okex.SubscribeOperation, tmpArgs)
 }
 
-// Unsubscribe into channel(s)
-//
-// https://www.okex.com/docs-v5/en/#websocket-api-unsubscribe
 func (c *ClientWs) Unsubscribe(p bool, ch []okex.ChannelName, args map[string]string) error {
-	tmpArgs := make([]map[string]string, len(ch))
-	for i, name := range ch {
-		tmpArgs[i] = make(map[string]string)
-		tmpArgs[i]["channel"] = string(name)
+	tmpArgs := make([]map[string]string, 0, max(len(ch), 1))
+	for i := 0; i < max(len(ch), 1); i++ {
+		item := make(map[string]string, len(args)+1)
 		for k, v := range args {
-			tmpArgs[i][k] = v
+			item[k] = v
 		}
+		if len(ch) > 0 {
+			item["channel"] = string(ch[i])
+		}
+		tmpArgs = append(tmpArgs, item)
 	}
 	return c.Send(p, okex.UnsubscribeOperation, tmpArgs)
 }
 
-// Send message through either connections
+// Send waits until the message is written or the connection is cancelled.
+// Trading requests are never replayed automatically after a disconnect.
 func (c *ClientWs) Send(p bool, op okex.Operation, args []map[string]string, extras ...map[string]string) error {
-	if op != okex.LoginOperation {
-		err := c.Connect(p)
-		if err == nil {
-			if p {
-				err = c.WaitForAuthorization()
-				if err != nil {
-					return err
-				}
-			}
-		} else {
+	if op == okex.LoginOperation {
+		return c.Login()
+	}
+	if err := c.Connect(p); err != nil {
+		return err
+	}
+	if p {
+		if err := c.WaitForAuthorization(); err != nil {
 			return err
 		}
 	}
-
-	data := map[string]interface{}{
-		"op":   op,
-		"args": args,
+	copied := make([]map[string]string, len(args))
+	for i, arg := range args {
+		copied[i] = make(map[string]string, len(arg))
+		for k, v := range arg {
+			copied[i][k] = v
+		}
 	}
+	data := map[string]interface{}{"op": op, "args": copied}
 	for _, extra := range extras {
 		for k, v := range extra {
 			data[k] = v
 		}
 	}
-	j, err := json.Marshal(data)
+	payload, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	c.sendChan[p] <- j
-	return nil
+	c.mu.Lock()
+	s := c.sessions[p]
+	c.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("websocket disconnected")
+	}
+	msg := outgoing{data: payload, op: op, args: copied, result: make(chan error, 1)}
+	select {
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	case s.send <- msg:
+	}
+	select {
+	case err := <-msg.result:
+		if ctxErr := s.ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return err
+	case <-s.ctx.Done():
+		return s.ctx.Err()
+	}
 }
 
-// SetChannels to receive certain events on separate channel
 func (c *ClientWs) SetChannels(errCh chan *events.Error, subCh chan *events.Subscribe, unSub chan *events.Unsubscribe, lCh chan *events.Login, sCh chan *events.Success) {
-	c.ErrChan = errCh
-	c.SubscribeChan = subCh
-	c.UnsubscribeCh = unSub
-	c.LoginChan = lCh
-	c.SuccessChan = sCh
+	c.channelMu.Lock()
+	defer c.channelMu.Unlock()
+	c.ErrChan, c.SubscribeChan, c.UnsubscribeCh, c.LoginChan, c.SuccessChan = errCh, subCh, unSub, lCh, sCh
 }
 
-// SetDialer sets a custom dialer for the WebSocket connection.
 func (c *ClientWs) SetDialer(dialer *websocket.Dialer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.dialer = dialer
 }
 
-func (c *ClientWs) SetEventChannels(structuredEventCh chan interface{}, rawEventCh chan *events.Basic) {
-	c.StructuredEventChan = structuredEventCh
-	c.RawEventChan = rawEventCh
+func (c *ClientWs) SetEventChannels(structured chan interface{}, raw chan *events.Basic) {
+	c.channelMu.Lock()
+	defer c.channelMu.Unlock()
+	c.StructuredEventChan, c.RawEventChan = structured, raw
 }
 
-// WaitForAuthorization waits for the auth response and try to log in if it was needed
 func (c *ClientWs) WaitForAuthorization() error {
-	if c.Authorized {
-		return nil
-	}
-	if err := c.Login(); err != nil {
+	if err := c.Connect(true); err != nil {
 		return err
 	}
-	ticker := time.NewTicker(time.Millisecond * 300)
+	c.mu.Lock()
+	s := c.sessions[true]
+	c.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("websocket disconnected")
+	}
+	return c.waitForAuthorization(s.ctx)
+}
+
+func (c *ClientWs) waitForAuthorization(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, pongWait)
+	defer cancel()
+	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	for range ticker.C {
-		if c.Authorized {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		c.authMu.RLock()
+		authorized, authErr := c.Authorized, c.authError
+		c.authMu.RUnlock()
+		if authErr != nil {
+			return authErr
+		}
+		if authorized {
 			return nil
 		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 	}
-	return nil
 }
 
-func (c *ClientWs) dial(p bool) error {
-	c.mu[p].Lock()
-	conn, res, err := c.dialer.Dial(string(c.url[p]), nil)
-	if err != nil {
-		var statusCode int
-		if res != nil {
-			statusCode = res.StatusCode
+// The pinned websocket version only applies DialContext cancellation to the TCP
+// dial. Close the transport as well to interrupt proxy/TLS/HTTP handshakes.
+func (c *ClientWs) dial(p bool) (*websocket.Conn, error) {
+	c.mu.Lock()
+	dialer := *c.dialer
+	c.mu.Unlock()
+	netDial := dialer.NetDialContext
+	if netDial == nil {
+		if dialer.NetDial != nil {
+			netDial = func(_ context.Context, network, address string) (net.Conn, error) {
+				return dialer.NetDial(network, address)
+			}
+		} else {
+			netDial = (&net.Dialer{}).DialContext
 		}
-		return fmt.Errorf("error %d: %w", statusCode, err)
 	}
-	c.conn[p] = conn
-	c.mu[p].Unlock()
-
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			fmt.Printf("error closing body: %v\n", err)
+	var stop func() bool
+	var closed chan struct{}
+	dialer.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := netDial(ctx, network, address)
+		if err == nil {
+			closed = make(chan struct{})
+			stop = context.AfterFunc(c.ctx, func() {
+				_ = conn.Close()
+				close(closed)
+			})
 		}
-	}(res.Body)
-	go func() {
-		err := c.receiver(p)
-		if err != nil {
-			fmt.Printf("receiver error: %v\n", err)
-		}
-	}()
-	go func() {
-		err := c.sender(p)
-		if err != nil {
-			fmt.Printf("sender error: %v\n", err)
-		}
-	}()
-
-	return nil
+		return conn, err
+	}
+	conn, res, err := dialer.DialContext(c.ctx, string(c.url[p]), nil)
+	if stop != nil && !stop() {
+		<-closed
+	}
+	if res != nil && res.Body != nil {
+		_ = res.Body.Close()
+	}
+	return conn, err
 }
 
-func (c *ClientWs) sender(p bool) error {
-	ticker := time.NewTicker(time.Millisecond * 300)
+func (c *ClientWs) run(p bool) {
+	defer c.wg.Done()
+	for c.ctx.Err() == nil {
+		conn, err := c.dial(p)
+		if err == nil {
+			ctx, cancel := context.WithCancel(c.ctx)
+			s := &connection{conn: conn, ctx: ctx, cancel: cancel, send: make(chan outgoing, 3)}
+			s.lastActivity.Store(time.Now().UnixNano())
+			c.mu.Lock()
+			if c.ctx.Err() != nil {
+				c.mu.Unlock()
+				cancel()
+				_ = conn.Close()
+				return
+			}
+			c.sessions[p] = s
+			close(c.changed)
+			c.changed = make(chan struct{})
+			c.mu.Unlock()
+			results := make(chan error, 2)
+			go func() { results <- c.sender(p, s) }()
+			go func() { results <- c.receiver(s) }()
+			<-results
+			cancel()
+			_ = conn.Close()
+			<-results // No old receiver or delivery may overlap the next connection.
+			c.mu.Lock()
+			delete(c.sessions, p)
+			if p {
+				c.authMu.Lock()
+				c.Authorized = false
+				c.AuthRequested = nil
+				c.authError = nil
+				c.authMu.Unlock()
+			}
+			c.mu.Unlock()
+		}
+		timer := time.NewTimer(redialTick)
+		select {
+		case <-c.ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *ClientWs) sender(p bool, s *connection) error {
+	write := func(data []byte) error {
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+			return err
+		}
+		if err := s.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			return err
+		}
+		s.lastActivity.Store(time.Now().UnixNano())
+		return nil
+	}
+	if p {
+		ts, sign := c.sign(http.MethodGet, "/users/self/verify")
+		payload, err := json.Marshal(map[string]interface{}{"op": okex.LoginOperation, "args": []map[string]string{{"apiKey": c.apiKey, "passphrase": c.passphrase, "timestamp": ts, "sign": sign}}})
+		if err != nil {
+			return err
+		}
+		c.authMu.Lock()
+		now := time.Now()
+		c.AuthRequested = &now
+		c.Authorized = false
+		c.authError = nil
+		c.authMu.Unlock()
+		if err := write(payload); err != nil {
+			return err
+		}
+		if err := c.waitForAuthorization(s.ctx); err != nil {
+			return err
+		}
+	}
+	c.mu.Lock()
+	keys := make([]string, 0, len(c.subscriptions[p]))
+	for key := range c.subscriptions[p] {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	args := make([]map[string]string, 0, len(keys))
+	for _, key := range keys {
+		args = append(args, c.subscriptions[p][key])
+	}
+	c.mu.Unlock()
+	if len(args) > 0 {
+		payload, err := json.Marshal(map[string]interface{}{"op": okex.SubscribeOperation, "args": args})
+		if err != nil {
+			return err
+		}
+		if err := write(payload); err != nil {
+			return err
+		}
+	}
+	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
-		case data := <-c.sendChan[p]:
-			c.mu[p].RLock()
-			err := c.conn[p].SetWriteDeadline(time.Now().Add(writeWait))
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case msg := <-s.send:
+			err := write(msg.data)
+			if err == nil && (msg.op == okex.SubscribeOperation || msg.op == okex.UnsubscribeOperation) {
+				c.mu.Lock()
+				for _, arg := range msg.args {
+					key, _ := json.Marshal(arg)
+					if msg.op == okex.SubscribeOperation {
+						c.subscriptions[p][string(key)] = arg
+					} else {
+						delete(c.subscriptions[p], string(key))
+					}
+				}
+				c.mu.Unlock()
+			}
+			msg.result <- err
 			if err != nil {
-				c.mu[p].RUnlock()
-				return err
-			}
-			w, err := c.conn[p].NextWriter(websocket.TextMessage)
-			if err != nil {
-				c.mu[p].RUnlock()
-				return err
-			}
-			if _, err = w.Write(data); err != nil {
-				c.mu[p].RUnlock()
-				return err
-			}
-			now := time.Now()
-			c.lastTransmit[p] = &now
-			c.mu[p].RUnlock()
-			if err := w.Close(); err != nil {
 				return err
 			}
 		case <-ticker.C:
-			c.mu[p].RLock()
-			conn := c.conn[p]
-			lastTransmit := c.lastTransmit[p]
-			c.mu[p].RUnlock()
-			if conn != nil && (lastTransmit == nil || (lastTransmit != nil && time.Since(*lastTransmit) > PingPeriod)) {
-				go func() {
-					c.sendChan[p] <- []byte("ping")
-				}()
+			if time.Since(time.Unix(0, s.lastActivity.Load())) >= PingPeriod {
+				if err := write([]byte("ping")); err != nil {
+					return err
+				}
 			}
-		case <-c.ctx.Done():
-			return c.handleCancel("sender")
 		}
 	}
 }
 
-func (c *ClientWs) receiver(p bool) error {
+func (c *ClientWs) receiver(s *connection) error {
 	for {
-		select {
-		case <-c.ctx.Done():
-			return c.handleCancel("receiver")
-		default:
-			c.mu[p].RLock()
-			err := c.conn[p].SetReadDeadline(time.Now().Add(pongWait))
-			if err != nil {
-				c.mu[p].RUnlock()
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+			return err
+		}
+		mt, data, err := s.conn.ReadMessage()
+		if err != nil {
+			return err
+		}
+		s.lastActivity.Store(time.Now().UnixNano())
+		if mt == websocket.TextMessage && string(data) != "pong" {
+			e := &events.Basic{}
+			if err := json.Unmarshal(data, e); err != nil {
 				return err
 			}
-			mt, data, err := c.conn[p].ReadMessage()
-			if err != nil {
-				c.mu[p].RUnlock()
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					return c.conn[p].Close()
-				}
-				return err
-			}
-			c.mu[p].RUnlock()
-			now := time.Now()
-			c.mu[p].Lock()
-			c.lastTransmit[p] = &now
-			c.mu[p].Unlock()
-			if mt == websocket.TextMessage && string(data) != "pong" {
-				e := &events.Basic{}
-				if err := json.Unmarshal(data, &e); err != nil {
-					return err
-				}
-				go func() {
-					c.process(data, e)
-				}()
-			}
+			c.process(s.ctx, data, e)
 		}
 	}
 }
 
 func (c *ClientWs) sign(method, path string) (string, string) {
-	t := time.Now().UTC().Unix()
-	ts := fmt.Sprint(t)
-	s := ts + method + path
-	p := []byte(s)
+	ts := fmt.Sprint(time.Now().UTC().Unix())
 	h := hmac.New(sha256.New, c.secretKey)
-	h.Write(p)
+	h.Write([]byte(ts + method + path))
 	return ts, base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-func (c *ClientWs) handleCancel(msg string) error {
-	go func() {
-		c.DoneChan <- msg
-	}()
-	return fmt.Errorf("operation cancelled: %s", msg)
+// deliver preserves backpressure and order while allowing shutdown to unblock
+// a consumer that has stopped reading. Nil channels disable that event stream.
+func deliver[T any](ctx context.Context, ch chan T, value T) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if ch == nil {
+		return true
+	}
+	select {
+	case <-ctx.Done():
+		return false
+	case ch <- value:
+		return true
+	}
 }
 
-func (c *ClientWs) process(data []byte, e *events.Basic) bool {
+func (c *ClientWs) process(ctx context.Context, data []byte, e *events.Basic) bool {
+	c.channelMu.RLock()
+	errCh, subCh, unsubCh, loginCh, successCh := c.ErrChan, c.SubscribeChan, c.UnsubscribeCh, c.LoginChan, c.SuccessChan
+	structured, raw := c.StructuredEventChan, c.RawEventChan
+	c.channelMu.RUnlock()
 	switch e.Event {
 	case "error":
-		e := events.Error{}
-		_ = json.Unmarshal(data, &e)
-		if c.ErrChan != nil {
-			c.ErrChan <- &e
+		event := events.Error{}
+		if json.Unmarshal(data, &event) != nil {
+			return false
 		}
+		deliver(ctx, errCh, &event)
 		return true
 	case "subscribe":
-		e := events.Subscribe{}
-		_ = json.Unmarshal(data, &e)
-		if c.SubscribeChan != nil {
-			c.SubscribeChan <- &e
+		event := events.Subscribe{}
+		if json.Unmarshal(data, &event) != nil {
+			return false
 		}
-		if c.StructuredEventChan != nil {
-			c.StructuredEventChan <- e
+		if deliver(ctx, subCh, &event) {
+			deliver(ctx, structured, interface{}(event))
 		}
 		return true
 	case "unsubscribe":
-		e := events.Unsubscribe{}
-		_ = json.Unmarshal(data, &e)
-		if c.UnsubscribeCh != nil {
-			c.UnsubscribeCh <- &e
+		event := events.Unsubscribe{}
+		if json.Unmarshal(data, &event) != nil {
+			return false
 		}
-		if c.StructuredEventChan != nil {
-			c.StructuredEventChan <- e
+		if deliver(ctx, unsubCh, &event) {
+			deliver(ctx, structured, interface{}(event))
 		}
 		return true
 	case "login":
-		if time.Since(*c.AuthRequested).Seconds() > 30 {
-			c.AuthRequested = nil
-			_ = c.Login()
-			break
+		event := events.Login{}
+		if json.Unmarshal(data, &event) != nil {
+			return false
 		}
-		c.Authorized = true
-		e := events.Login{}
-		_ = json.Unmarshal(data, &e)
-		if c.LoginChan != nil {
-			c.LoginChan <- &e
+		c.authMu.Lock()
+		c.Authorized = event.Code == "0"
+		c.AuthRequested = nil
+		if event.Code != "0" {
+			c.authError = fmt.Errorf("websocket login failed: %s: %s", event.Code, event.Msg)
 		}
-		if c.StructuredEventChan != nil {
-			c.StructuredEventChan <- e
+		c.authMu.Unlock()
+		if deliver(ctx, loginCh, &event) {
+			deliver(ctx, structured, interface{}(event))
 		}
 		return true
 	}
-	if c.Private.Process(data, e) {
-		return true
-	}
-	if c.Public.Process(data, e) {
+	if c.Private.process(ctx, data, e) || c.Public.process(ctx, data, e) {
 		return true
 	}
 	if e.ID != "" {
 		if e.Code != 0 {
 			ee := *e
 			ee.Event = "error"
-			return c.process(data, &ee)
+			return c.process(ctx, data, &ee)
 		}
-		e := events.Success{}
-		_ = json.Unmarshal(data, &e)
-		if c.SuccessChan != nil {
-			c.SuccessChan <- &e
+		event := events.Success{}
+		if json.Unmarshal(data, &event) != nil {
+			return false
 		}
-		if c.StructuredEventChan != nil {
-			c.StructuredEventChan <- e
+		if deliver(ctx, successCh, &event) {
+			deliver(ctx, structured, interface{}(event))
 		}
 		return true
 	}
-	c.RawEventChan <- e
+	deliver(ctx, raw, e)
 	return false
 }

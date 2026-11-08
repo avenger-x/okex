@@ -8,6 +8,9 @@ Unreleased
 ### Changed
 
 - Changed `OrderBookEntity.DepthPrice` and `Size` from `float64` to `string` for REST and WebSocket order books to preserve the exchange's original precision and trailing zeros.
+- Added `OrderBookWs.SeqID` and `PrevSeqID` as `int64` for sequence-gap detection.
+- Dispatch WebSocket messages in receive order with cancellable event delivery and automatic reconnection, reauthentication, and subscription restoration.
+- Added synchronous WebSocket cancellation, `Close`, and `Wait` to close sockets and wait for connection workers and event dispatches to exit.
 
 v1.1.5-alpha
 -------------

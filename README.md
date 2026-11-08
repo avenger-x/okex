@@ -50,10 +50,11 @@ func main() {
   passphrase := "YOUR-PASS-PHRASE"
   dest := okex.NormalServer // The main API server
   ctx := context.Background()
-  client, err := api.NewClient(ctx, apiKey, secretKey, passphrase, &dest)
+  client, err := api.NewClient(ctx, apiKey, secretKey, passphrase, dest)
   if err != nil {
     log.Fatalln(err)
   }
+  defer client.Ws.Close()
 
 
   log.Println("Starting")
@@ -65,10 +66,10 @@ func main() {
   client.Ws.SetChannels(errChan, subChan, uSubChan, logChan, sucChan)
 
   obCh := make(chan *public.OrderBook)
-  err = client.Ws.Public.OrderBook(ws_public_requests.OrderBook{
+  err = client.Ws.Public.OrderBook([]ws_public_requests.OrderBook{{
     InstID: "BTC-USD-SWAP",
     Channel: "books",
-  }, obCh)
+  }}, obCh)
   if err != nil {
     log.Fatalln(err)
   }
@@ -113,6 +114,24 @@ REST and WebSocket order books share `OrderBookEntity`. Its `DepthPrice` and `Si
 the exchange's exact decimal representation, including very small prices, large quantities, and trailing zeros
 (for example, `0.000000000123456789`, `123456789.123456789`, and `1.23000000`). `LiquidatedOrder` and `OrderNumbers`
 remain integers. Code that previously used these fields as `float64` must now handle strings explicitly.
+
+WebSocket order books also expose `SeqID` and `PrevSeqID` as `int64`, decoded from `seqId` and `prevSeqId`.
+Consumers can compare these fields per instrument to detect gaps and rebuild from a new snapshot.
+Messages on each connection are dispatched in receive order, including snapshot and update events.
+Enabled event channels apply backpressure, so consume every channel you configure; nil channels disable delivery.
+
+Connections automatically reconnect and restore subscriptions after transport failures. Private connections log in
+again before restoring subscriptions. Unsubscribed channels are not restored, and trading requests are not replayed.
+`Send` returns after writing the message, or returns an error if the connection is cancelled or the write fails;
+this does not confirm that the exchange accepted the request.
+
+`client.Ws.Cancel()` and `client.Ws.Close()` cancel the client, close its sockets, stop heartbeats and reconnects,
+and wait for background workers and event dispatches to exit. When cancelling the parent context, call
+`client.Ws.Wait()` to wait for the same shutdown boundary. Caller-owned event channels remain open and may be
+closed by the caller after shutdown completes. `DoneChan` receives a best-effort completion notification;
+use `Wait` or `Close` when you need to ensure shutdown has finished. For concurrent authorization checks,
+use `IsAuthorized()` instead of reading `Authorized` directly. Configure channels before connecting or use the
+channel setters while connected.
 
 Supporting APIs
 ---------------
