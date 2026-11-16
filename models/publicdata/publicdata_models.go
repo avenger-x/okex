@@ -12,8 +12,8 @@ type (
 		QuoteCcy  string               `json:"quoteCcy,omitempty"`
 		SettleCcy string               `json:"settleCcy,omitempty"`
 		CtValCcy  string               `json:"ctValCcy,omitempty"`
-		CtVal     okex.JSONFloat64     `json:"ctVal,omitempty"`
-		CtMult    okex.JSONFloat64     `json:"ctMult,omitempty"`
+		CtVal     string               `json:"ctVal,omitempty"`
+		CtMult    string               `json:"ctMult,omitempty"`
 		Stk       okex.JSONFloat64     `json:"stk,omitempty"`
 		TickSz    okex.JSONFloat64     `json:"tickSz,omitempty"`
 		LotSz     okex.JSONFloat64     `json:"lotSz,omitempty"`

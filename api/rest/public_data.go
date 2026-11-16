@@ -1,11 +1,13 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+
 	"github.com/amir-the-h/okex"
 	requests "github.com/amir-the-h/okex/requests/rest/public"
 	responses "github.com/amir-the-h/okex/responses/public_data"
-	"net/http"
 )
 
 // PublicData
@@ -25,15 +27,18 @@ func NewPublicData(c *ClientRest) *PublicData {
 //
 // https://www.okex.com/docs-v5/en/#rest-api-public-data-get-instruments
 func (c *PublicData) GetInstruments(req requests.GetInstruments) (response responses.GetInstruments, err error) {
+	return c.GetInstrumentsWithContext(context.Background(), req)
+}
+
+// GetInstrumentsWithContext performs GetInstruments with request-scoped cancellation.
+func (c *PublicData) GetInstrumentsWithContext(ctx context.Context, req requests.GetInstruments) (response responses.GetInstruments, err error) {
 	p := "/api/v5/public/instruments"
 	m := okex.S2M(req)
-	res, err := c.client.Do(http.MethodGet, p, false, m)
+	res, err := c.client.DoWithContext(ctx, http.MethodGet, p, false, m)
 	if err != nil {
 		return
 	}
-	defer res.Body.Close()
-	d := json.NewDecoder(res.Body)
-	err = d.Decode(&response)
+	err = decodeListResponse(res, &response.Basic, &response.Instruments)
 	return
 }
 

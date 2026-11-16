@@ -6,41 +6,41 @@ import (
 
 type (
 	Balance struct {
-		TotalEq     okex.JSONFloat64  `json:"totalEq"`
-		IsoEq       okex.JSONFloat64  `json:"isoEq"`
-		AdjEq       okex.JSONFloat64  `json:"adjEq,omitempty"`
-		OrdFroz     okex.JSONFloat64  `json:"ordFroz,omitempty"`
-		Imr         okex.JSONFloat64  `json:"imr,omitempty"`
-		Mmr         okex.JSONFloat64  `json:"mmr,omitempty"`
-		MgnRatio    okex.JSONFloat64  `json:"mgnRatio,omitempty"`
-		NotionalUsd okex.JSONFloat64  `json:"notionalUsd,omitempty"`
+		TotalEq     string            `json:"totalEq"`
+		IsoEq       string            `json:"isoEq"`
+		AdjEq       string            `json:"adjEq,omitempty"`
+		OrdFroz     string            `json:"ordFroz,omitempty"`
+		Imr         string            `json:"imr,omitempty"`
+		Mmr         string            `json:"mmr,omitempty"`
+		MgnRatio    string            `json:"mgnRatio,omitempty"`
+		NotionalUsd string            `json:"notionalUsd,omitempty"`
 		Details     []*BalanceDetails `json:"details,omitempty"`
 		UTime       okex.JSONTime     `json:"uTime"`
 	}
 	BalanceDetails struct {
-		Ccy           string           `json:"ccy"`
-		Eq            okex.JSONFloat64 `json:"eq"`
-		CashBal       okex.JSONFloat64 `json:"cashBal"`
-		IsoEq         okex.JSONFloat64 `json:"isoEq,omitempty"`
-		AvailEq       okex.JSONFloat64 `json:"availEq,omitempty"`
-		DisEq         okex.JSONFloat64 `json:"disEq"`
-		AvailBal      okex.JSONFloat64 `json:"availBal"`
-		FrozenBal     okex.JSONFloat64 `json:"frozenBal"`
-		OrdFrozen     okex.JSONFloat64 `json:"ordFrozen"`
-		Liab          okex.JSONFloat64 `json:"liab,omitempty"`
-		Upl           okex.JSONFloat64 `json:"upl,omitempty"`
-		UplLib        okex.JSONFloat64 `json:"uplLib,omitempty"`
-		CrossLiab     okex.JSONFloat64 `json:"crossLiab,omitempty"`
-		IsoLiab       okex.JSONFloat64 `json:"isoLiab,omitempty"`
-		MgnRatio      okex.JSONFloat64 `json:"mgnRatio,omitempty"`
-		Interest      okex.JSONFloat64 `json:"interest,omitempty"`
-		Twap          okex.JSONFloat64 `json:"twap,omitempty"`
-		MaxLoan       okex.JSONFloat64 `json:"maxLoan,omitempty"`
-		EqUsd         okex.JSONFloat64 `json:"eqUsd"`
-		NotionalLever okex.JSONFloat64 `json:"notionalLever,omitempty"`
-		StgyEq        okex.JSONFloat64 `json:"stgyEq"`
-		IsoUpl        okex.JSONFloat64 `json:"isoUpl,omitempty"`
-		UTime         okex.JSONTime    `json:"uTime"`
+		Ccy           string        `json:"ccy"`
+		Eq            string        `json:"eq"`
+		CashBal       string        `json:"cashBal"`
+		IsoEq         string        `json:"isoEq,omitempty"`
+		AvailEq       string        `json:"availEq,omitempty"`
+		DisEq         string        `json:"disEq"`
+		AvailBal      string        `json:"availBal"`
+		FrozenBal     string        `json:"frozenBal"`
+		OrdFrozen     string        `json:"ordFrozen"`
+		Liab          string        `json:"liab,omitempty"`
+		Upl           string        `json:"upl,omitempty"`
+		UplLib        string        `json:"uplLib,omitempty"`
+		CrossLiab     string        `json:"crossLiab,omitempty"`
+		IsoLiab       string        `json:"isoLiab,omitempty"`
+		MgnRatio      string        `json:"mgnRatio,omitempty"`
+		Interest      string        `json:"interest,omitempty"`
+		Twap          string        `json:"twap,omitempty"`
+		MaxLoan       string        `json:"maxLoan,omitempty"`
+		EqUsd         string        `json:"eqUsd"`
+		NotionalLever string        `json:"notionalLever,omitempty"`
+		StgyEq        string        `json:"stgyEq"`
+		IsoUpl        string        `json:"isoUpl,omitempty"`
+		UTime         okex.JSONTime `json:"uTime"`
 	}
 	Position struct {
 		InstID      string              `json:"instId"`
@@ -50,30 +50,31 @@ type (
 		Ccy         string              `json:"ccy"`
 		PosID       string              `json:"posId"`
 		TradeID     string              `json:"tradeId"`
-		Pos         okex.JSONFloat64    `json:"pos"`
-		AvailPos    okex.JSONFloat64    `json:"availPos,omitempty"`
-		AvgPx       okex.JSONFloat64    `json:"avgPx"`
-		Upl         okex.JSONFloat64    `json:"upl"`
-		UplRatio    okex.JSONFloat64    `json:"uplRatio"`
-		Lever       okex.JSONFloat64    `json:"lever"`
-		LiqPx       okex.JSONFloat64    `json:"liqPx,omitempty"`
-		Imr         okex.JSONFloat64    `json:"imr,omitempty"`
-		Margin      okex.JSONFloat64    `json:"margin,omitempty"`
-		MgnRatio    okex.JSONFloat64    `json:"mgnRatio"`
-		Mmr         okex.JSONFloat64    `json:"mmr"`
-		Liab        okex.JSONFloat64    `json:"liab,omitempty"`
-		Interest    okex.JSONFloat64    `json:"interest"`
-		NotionalUsd okex.JSONFloat64    `json:"notionalUsd"`
-		ADL         okex.JSONFloat64    `json:"adl"`
-		Last        okex.JSONFloat64    `json:"last"`
-		DeltaBS     okex.JSONFloat64    `json:"deltaBS"`
-		DeltaPA     okex.JSONFloat64    `json:"deltaPA"`
-		GammaBS     okex.JSONFloat64    `json:"gammaBS"`
-		GammaPA     okex.JSONFloat64    `json:"gammaPA"`
-		ThetaBS     okex.JSONFloat64    `json:"thetaBS"`
-		ThetaPA     okex.JSONFloat64    `json:"thetaPA"`
-		VegaBS      okex.JSONFloat64    `json:"vegaBS"`
-		VegaPA      okex.JSONFloat64    `json:"vegaPA"`
+		Pos         string              `json:"pos"`
+		AvailPos    string              `json:"availPos,omitempty"`
+		AvgPx       string              `json:"avgPx"`
+		MarkPx      string              `json:"markPx"`
+		Upl         string              `json:"upl"`
+		UplRatio    string              `json:"uplRatio"`
+		Lever       string              `json:"lever"`
+		LiqPx       string              `json:"liqPx,omitempty"`
+		Imr         string              `json:"imr,omitempty"`
+		Margin      string              `json:"margin,omitempty"`
+		MgnRatio    string              `json:"mgnRatio"`
+		Mmr         string              `json:"mmr"`
+		Liab        string              `json:"liab,omitempty"`
+		Interest    string              `json:"interest"`
+		NotionalUsd string              `json:"notionalUsd"`
+		ADL         string              `json:"adl"`
+		Last        string              `json:"last"`
+		DeltaBS     string              `json:"deltaBS"`
+		DeltaPA     string              `json:"deltaPA"`
+		GammaBS     string              `json:"gammaBS"`
+		GammaPA     string              `json:"gammaPA"`
+		ThetaBS     string              `json:"thetaBS"`
+		ThetaPA     string              `json:"thetaPA"`
+		VegaBS      string              `json:"vegaBS"`
+		VegaPA      string              `json:"vegaPA"`
 		PosSide     okex.PositionSide   `json:"posSide"`
 		MgnMode     okex.MarginMode     `json:"mgnMode"`
 		InstType    okex.InstrumentType `json:"instType"`

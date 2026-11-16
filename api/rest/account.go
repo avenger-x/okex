@@ -1,12 +1,14 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"strings"
+
 	"github.com/amir-the-h/okex"
 	requests "github.com/amir-the-h/okex/requests/rest/account"
 	responses "github.com/amir-the-h/okex/responses/account"
-	"net/http"
-	"strings"
 )
 
 // Account
@@ -26,18 +28,21 @@ func NewAccount(c *ClientRest) *Account {
 //
 // https://www.okex.com/docs-v5/en/#rest-api-account-get-balance
 func (c *Account) GetBalance(req requests.GetBalance) (response responses.GetBalance, err error) {
+	return c.GetBalanceWithContext(context.Background(), req)
+}
+
+// GetBalanceWithContext performs GetBalance with request-scoped cancellation.
+func (c *Account) GetBalanceWithContext(ctx context.Context, req requests.GetBalance) (response responses.GetBalance, err error) {
 	p := "/api/v5/account/balance"
 	m := okex.S2M(req)
 	if len(req.Ccy) > 0 {
 		m["ccy"] = strings.Join(req.Ccy, ",")
 	}
-	res, err := c.client.Do(http.MethodGet, p, true, m)
+	res, err := c.client.DoWithContext(ctx, http.MethodGet, p, true, m)
 	if err != nil {
 		return
 	}
-	defer res.Body.Close()
-	d := json.NewDecoder(res.Body)
-	err = d.Decode(&response)
+	err = decodeListResponse(res, &response.Basic, &response.Balances)
 
 	return
 }
@@ -47,6 +52,11 @@ func (c *Account) GetBalance(req requests.GetBalance) (response responses.GetBal
 //
 // https://www.okex.com/docs-v5/en/#rest-api-account-get-positions
 func (c *Account) GetPositions(req requests.GetPositions) (response responses.GetPositions, err error) {
+	return c.GetPositionsWithContext(context.Background(), req)
+}
+
+// GetPositionsWithContext performs GetPositions with request-scoped cancellation.
+func (c *Account) GetPositionsWithContext(ctx context.Context, req requests.GetPositions) (response responses.GetPositions, err error) {
 	p := "/api/v5/account/positions"
 	m := okex.S2M(req)
 	if len(req.InstID) > 0 {
@@ -55,13 +65,11 @@ func (c *Account) GetPositions(req requests.GetPositions) (response responses.Ge
 	if len(req.PosID) > 0 {
 		m["posId"] = strings.Join(req.PosID, ",")
 	}
-	res, err := c.client.Do(http.MethodGet, p, true, m)
+	res, err := c.client.DoWithContext(ctx, http.MethodGet, p, true, m)
 	if err != nil {
 		return
 	}
-	defer res.Body.Close()
-	d := json.NewDecoder(res.Body)
-	err = d.Decode(&response)
+	err = decodeListResponse(res, &response.Basic, &response.Positions)
 
 	return
 }

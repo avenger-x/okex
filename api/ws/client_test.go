@@ -486,6 +486,75 @@ func TestChannelSettersWhileReceiving(t *testing.T) {
 	c.Cancel()
 }
 
+func TestAccountAndInstrumentEventsPreserveDecimals(t *testing.T) {
+	c := NewClient(context.Background(), "", "", "", nil)
+	defer c.Close()
+	structured := make(chan interface{}, 1)
+	c.SetEventChannels(structured, nil)
+	const (
+		precise  = "9007199254740993.1234567890000"
+		tiny     = "0.00000000000000000123"
+		negative = "-0.1234567890123456789"
+		zero     = "0.0000"
+	)
+	for _, tt := range []struct {
+		channel, data string
+		check         func(interface{}) bool
+	}{
+		{"account", `{"totalEq":"` + precise + `","details":[{"eq":"` + tiny + `","cashBal":"` + zero + `","availBal":"","liab":"` + negative + `"}]}`, func(value interface{}) bool {
+			e, ok := value.(privateevents.Account)
+			if !ok || len(e.Balances) != 1 || len(e.Balances[0].Details) != 1 {
+				return false
+			}
+			d := e.Balances[0].Details[0]
+			return e.Balances[0].TotalEq == precise && d.Eq == tiny && d.CashBal == zero && d.AvailBal == "" && d.Liab == negative
+		}},
+		{"positions", `{"pos":"` + negative + `","avgPx":"` + precise + `","markPx":"` + tiny + `","upl":"` + negative + `","margin":"` + zero + `","liqPx":""}`, func(value interface{}) bool {
+			e, ok := value.(privateevents.Position)
+			if !ok || len(e.Positions) != 1 {
+				return false
+			}
+			p := e.Positions[0]
+			return p.Pos == negative && p.AvgPx == precise && p.MarkPx == tiny && p.Upl == negative && p.Margin == zero && p.LiqPx == ""
+		}},
+		{"balance_and_position", `{"balData":[{"cashBal":"` + precise + `"}],"posData":[{"pos":"` + negative + `","markPx":"` + tiny + `"}]}`, func(value interface{}) bool {
+			e, ok := value.(privateevents.BalanceAndPosition)
+			if !ok || len(e.BalanceAndPositions) != 1 {
+				return false
+			}
+			b := e.BalanceAndPositions[0]
+			return len(b.BalData) == 1 && b.BalData[0].CashBal == precise && len(b.PosData) == 1 && b.PosData[0].Pos == negative && b.PosData[0].MarkPx == tiny
+		}},
+		{"instruments", `{"instType":"SWAP","ctVal":"` + tiny + `","ctMult":"1.23000","ctValCcy":"BTC","ctType":"inverse"}`, func(value interface{}) bool {
+			e, ok := value.(publicevents.Instruments)
+			if !ok || len(e.Instruments) != 1 {
+				return false
+			}
+			i := e.Instruments[0]
+			return i.CtVal == tiny && i.CtMult == "1.23000" && i.CtValCcy == "BTC" && i.CtType == okex.ContractInverseType
+		}},
+	} {
+		t.Run(tt.channel, func(t *testing.T) {
+			data := []byte(fmt.Sprintf(`{"arg":{"channel":%q},"data":[%s]}`, tt.channel, tt.data))
+			var basic events.Basic
+			if err := json.Unmarshal(data, &basic); err != nil {
+				t.Fatal(err)
+			}
+			if !c.process(c.ctx, data, &basic) {
+				t.Fatal("event was not recognized")
+			}
+			select {
+			case event := <-structured:
+				if !tt.check(event) {
+					t.Errorf("unexpected event: %+v", event)
+				}
+			default:
+				t.Fatal("event was not dispatched")
+			}
+		})
+	}
+}
+
 func TestOrderBookSequenceJSON(t *testing.T) {
 	var event publicevents.OrderBook
 	if err := json.Unmarshal(bookMessage("snapshot", 9007199254740993, -1), &event); err != nil {

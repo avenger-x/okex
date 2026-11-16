@@ -11,6 +11,8 @@ Unreleased
 - Added `OrderBookWs.SeqID` and `PrevSeqID` as `int64` for sequence-gap detection.
 - Dispatch WebSocket messages in receive order with cancellable event delivery and automatic reconnection, reauthentication, and subscription restoration.
 - Added synchronous WebSocket cancellation, `Close`, and `Wait` to close sockets and wait for connection workers and event dispatches to exit.
+- Preserve account balance and position decimals and instrument `ctVal`/`ctMult` as strings in REST and WebSocket models; add the position `markPx` field.
+- Add context-aware REST balance, position and instrument queries, optional HTTP client injection, and explicit HTTP and exchange errors.
 
 v1.1.5-alpha
 -------------

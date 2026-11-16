@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/amir-the-h/okex"
 	"github.com/amir-the-h/okex/api/rest"
 	"github.com/amir-the-h/okex/api/ws"
@@ -14,8 +16,8 @@ type Client struct {
 	ctx  context.Context
 }
 
-// NewClient returns a pointer to a fresh Client
-func NewClient(ctx context.Context, apiKey, secretKey, passphrase string, destination okex.Destination) (*Client, error) {
+// NewClient returns a fresh Client, optionally using an injected REST HTTP client.
+func NewClient(ctx context.Context, apiKey, secretKey, passphrase string, destination okex.Destination, httpClient ...*http.Client) (*Client, error) {
 	restURL := okex.RestURL
 	wsPubURL := okex.PublicWsURL
 	wsPriURL := okex.PrivateWsURL
@@ -30,7 +32,7 @@ func NewClient(ctx context.Context, apiKey, secretKey, passphrase string, destin
 		wsPriURL = okex.DemoPrivateWsURL
 	}
 
-	r := rest.NewClient(apiKey, secretKey, passphrase, restURL, destination)
+	r := rest.NewClient(apiKey, secretKey, passphrase, restURL, destination, httpClient...)
 	c := ws.NewClient(ctx, apiKey, secretKey, passphrase, map[bool]okex.BaseURL{true: wsPriURL, false: wsPubURL})
 
 	return &Client{r, c, ctx}, nil

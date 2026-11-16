@@ -133,6 +133,33 @@ use `Wait` or `Close` when you need to ensure shutdown has finished. For concurr
 use `IsAuthorized()` instead of reading `Authorized` directly. Configure channels before connecting or use the
 channel setters while connected.
 
+Account balances and positions also preserve decimal fields as strings in both REST and WebSocket responses.
+For example, `CashBal == ""` means a value is unavailable, while `CashBal == "0"` or `"0.0000"` is a reported zero.
+Positions expose `MarkPx`, and instruments expose `CtVal` and `CtMult` as strings alongside `CtValCcy` and `CtType`.
+
+The REST queries accept a context per request. Pass an optional `*http.Client` to `api.NewClient` or `rest.NewClient`
+to configure the REST transport or its client-wide timeout:
+
+```go
+// account is github.com/amir-the-h/okex/requests/rest/account.
+client := rest.NewClient(apiKey, secretKey, passphrase, okex.RestURL, okex.NormalServer,
+    &http.Client{Timeout: 10 * time.Second})
+ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+defer cancel()
+
+positions, err := client.Account.GetPositionsWithContext(ctx, account.GetPositions{InstType: okex.SwapInstrument})
+if err != nil {
+    return err
+}
+for _, p := range positions.Positions {
+    log.Printf("%s position=%q markPx=%q upl=%q", p.InstID, p.Pos, p.MarkPx, p.Upl)
+}
+```
+
+`GetBalanceWithContext` and `GetInstrumentsWithContext` work the same way. These queries return errors for non-2xx
+responses, nonzero exchange codes, and malformed payloads. For exchange errors, the returned response still includes
+`Code` and `Msg`. The methods without `WithContext` use `context.Background()`.
+
 Supporting APIs
 ---------------
 
@@ -156,10 +183,8 @@ Supporting APIs
 Features
 --------
 
-* All [requests](/requests), [responses](/responses), and [events](events) are well typed and will convert into the
-  language built-in types instead of using API's strings, except order book prices and quantities, which preserve
-  the original strings. *Note that zero values will be replaced with non-existing
-  data.*
+* [Requests](/requests), [responses](/responses), and [events](events) use typed models. Order book levels,
+  account and position decimals, and contract value and multiplier preserve the original strings.
 * Fully automated authorization steps for both [REST](/api/rest) and [WS](/api/ws)
 * To receive websocket events you can choose [RawEventChan](/api/ws/client.go#L25)
   , [StructuredEventChan](/api/ws/client.go#L28), or provide your own
