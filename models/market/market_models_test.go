@@ -37,6 +37,40 @@ func TestOrderBookEntityUnmarshalJSONPrecision(t *testing.T) {
 	}
 }
 
+func TestTickerResponsesPreserveQuoteStrings(t *testing.T) {
+	values := []string{"0.000000000123456789", "123456789.123456789", "1.23000000", "9007199254740993.123456789", "", "0", "0.00000000"}
+	for i := range values {
+		want := [4]string{values[i], values[(i+1)%len(values)], values[(i+2)%len(values)], values[(i+3)%len(values)]}
+		data := fmt.Sprintf(`[{"instId":"BTC-USDT","bidPx":%q,"bidSz":%q,"askPx":%q,"askSz":%q}]`, want[0], want[1], want[2], want[3])
+		t.Run(fmt.Sprintf("REST/%d", i), func(t *testing.T) {
+			var response marketresponses.Ticker
+			if err := json.Unmarshal([]byte(`{"code":"0","data":`+data+`}`), &response); err != nil {
+				t.Fatal(err)
+			}
+			if len(response.Tickers) != 1 || response.Tickers[0] == nil {
+				t.Fatalf("missing ticker: %+v", response)
+			}
+			ticker := response.Tickers[0]
+			if got := [4]string{ticker.BidPx, ticker.BidSz, ticker.AskPx, ticker.AskSz}; got != want {
+				t.Errorf("quotes = %q, want %q", got, want)
+			}
+		})
+		t.Run(fmt.Sprintf("WebSocket/%d", i), func(t *testing.T) {
+			var event public.Tickers
+			if err := json.Unmarshal([]byte(`{"arg":{"channel":"tickers","instId":"BTC-USDT"},"data":`+data+`}`), &event); err != nil {
+				t.Fatal(err)
+			}
+			if len(event.Tickers) != 1 || event.Tickers[0] == nil {
+				t.Fatalf("missing ticker: %+v", event)
+			}
+			ticker := event.Tickers[0]
+			if got := [4]string{ticker.BidPx, ticker.BidSz, ticker.AskPx, ticker.AskSz}; got != want {
+				t.Errorf("quotes = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestOrderBookEntityUnmarshalJSONInvalid(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -160,6 +160,15 @@ for _, p := range positions.Positions {
 responses, nonzero exchange codes, and malformed payloads. For exchange errors, the returned response still includes
 `Code` and `Msg`. The methods without `WithContext` use `context.Background()`.
 
+Market queries support `Market.GetOrderBookWithContext(ctx, req)` and `Market.GetTickersWithContext(ctx, req)`
+using the existing request and response types. Their legacy methods use `context.Background()` and share the same
+parsing, response-body cleanup, and error checks. Nonzero business codes return `*rest.APIError` and preserve
+the response's `Code` and `Msg`; HTTP failures and malformed responses also return errors.
+
+`market.Ticker` preserves `BidPx`, `BidSz`, `AskPx`, and `AskSz` as strings in both REST and WebSocket responses.
+These fields retain tiny prices, large quantities, and trailing zeros, including `"0.000000000123456789"`,
+`"123456789.123456789"`, and `"1.23000000"`. Code using these four fields as numbers must now handle strings.
+
 Supporting APIs
 ---------------
 
@@ -183,7 +192,7 @@ Supporting APIs
 Features
 --------
 
-* [Requests](/requests), [responses](/responses), and [events](events) use typed models. Order book levels,
+* [Requests](/requests), [responses](/responses), and [events](events) use typed models. Order book levels, ticker bid/ask quotes,
   account and position decimals, and contract value and multiplier preserve the original strings.
 * Fully automated authorization steps for both [REST](/api/rest) and [WS](/api/ws)
 * To receive websocket events you can choose [RawEventChan](/api/ws/client.go#L25)

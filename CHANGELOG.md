@@ -7,6 +7,8 @@ Unreleased
 
 ### Changed
 
+- Add `Market.GetOrderBookWithContext` and `GetTickersWithContext` with explicit exchange errors; legacy methods delegate using `context.Background()`.
+- Preserve `Ticker.BidPx`, `BidSz`, `AskPx`, and `AskSz` as original strings in REST and WebSocket responses.
 - Changed `OrderBookEntity.DepthPrice` and `Size` from `float64` to `string` for REST and WebSocket order books to preserve the exchange's original precision and trailing zeros.
 - Added `OrderBookWs.SeqID` and `PrevSeqID` as `int64` for sequence-gap detection.
 - Dispatch WebSocket messages in receive order with cancellable event delivery and automatic reconnection, reauthentication, and subscription restoration.

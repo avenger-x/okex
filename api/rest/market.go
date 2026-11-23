@@ -1,11 +1,13 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+
 	"github.com/amir-the-h/okex"
 	requests "github.com/amir-the-h/okex/requests/rest/market"
 	responses "github.com/amir-the-h/okex/responses/market"
-	"net/http"
 )
 
 // Market
@@ -25,15 +27,18 @@ func NewMarket(c *ClientRest) *Market {
 //
 // https://www.okex.com/docs-v5/en/#rest-api-market-data-get-tickers
 func (c *Market) GetTickers(req requests.GetTickers) (response responses.Ticker, err error) {
+	return c.GetTickersWithContext(context.Background(), req)
+}
+
+// GetTickersWithContext retrieves tickers with request-scoped cancellation.
+func (c *Market) GetTickersWithContext(ctx context.Context, req requests.GetTickers) (response responses.Ticker, err error) {
 	p := "/api/v5/market/tickers"
 	m := okex.S2M(req)
-	res, err := c.client.Do(http.MethodGet, p, false, m)
+	res, err := c.client.DoWithContext(ctx, http.MethodGet, p, false, m)
 	if err != nil {
 		return
 	}
-	defer res.Body.Close()
-	d := json.NewDecoder(res.Body)
-	err = d.Decode(&response)
+	err = decodeListResponse(res, &response.Basic, &response.Tickers)
 	return
 }
 
@@ -76,15 +81,18 @@ func (c *Market) GetIndexTickers(req requests.GetIndexTickers) (response respons
 //
 // https://www.okex.com/docs-v5/en/#rest-api-market-data-get-order-book
 func (c *Market) GetOrderBook(req requests.GetOrderBook) (response responses.OrderBook, err error) {
+	return c.GetOrderBookWithContext(context.Background(), req)
+}
+
+// GetOrderBookWithContext retrieves an order book with request-scoped cancellation.
+func (c *Market) GetOrderBookWithContext(ctx context.Context, req requests.GetOrderBook) (response responses.OrderBook, err error) {
 	p := "/api/v5/market/books"
 	m := okex.S2M(req)
-	res, err := c.client.Do(http.MethodGet, p, false, m)
+	res, err := c.client.DoWithContext(ctx, http.MethodGet, p, false, m)
 	if err != nil {
 		return
 	}
-	defer res.Body.Close()
-	d := json.NewDecoder(res.Body)
-	err = d.Decode(&response)
+	err = decodeListResponse(res, &response.Basic, &response.OrderBooks)
 	return
 }
 

@@ -13,10 +13,10 @@ type (
 		InstID    string              `json:"instId"`
 		Last      okex.JSONFloat64    `json:"last"`
 		LastSz    okex.JSONFloat64    `json:"lastSz"`
-		AskPx     okex.JSONFloat64    `json:"askPx"`
-		AskSz     okex.JSONFloat64    `json:"askSz"`
-		BidPx     okex.JSONFloat64    `json:"bidPx"`
-		BidSz     okex.JSONFloat64    `json:"bidSz"`
+		AskPx     string              `json:"askPx"`
+		AskSz     string              `json:"askSz"`
+		BidPx     string              `json:"bidPx"`
+		BidSz     string              `json:"bidSz"`
 		Open24h   okex.JSONFloat64    `json:"open24h"`
 		High24h   okex.JSONFloat64    `json:"high24h"`
 		Low24h    okex.JSONFloat64    `json:"low24h"`

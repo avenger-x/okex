@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -17,7 +18,10 @@ import (
 	"github.com/amir-the-h/okex/api"
 	"github.com/amir-the-h/okex/api/rest"
 	account "github.com/amir-the-h/okex/requests/rest/account"
+	market "github.com/amir-the-h/okex/requests/rest/market"
 	public "github.com/amir-the-h/okex/requests/rest/public"
+	"github.com/amir-the-h/okex/responses"
+	marketresponses "github.com/amir-the-h/okex/responses/market"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -281,5 +285,243 @@ func TestListResponseErrors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMarketQueriesPreservePrecisionAndLegacyCalls(t *testing.T) {
+	const (
+		price    = "0.000000000123456789"
+		size     = "123456789.123456789"
+		trailing = "1.23000000"
+	)
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			var bodies []*trackedBody
+			client := rest.NewClient("key", "secret", "pass", "https://example.test", okex.NormalServer,
+				&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if legacy {
+						if r.Context() != context.Background() {
+							t.Error("legacy method did not use Background context")
+						}
+					} else if r.Context() != ctx {
+						t.Error("request context was not propagated")
+					}
+					if r.Method != http.MethodGet || r.Body != nil || r.Header.Get("OK-ACCESS-KEY") != "" {
+						t.Errorf("unexpected public GET request: %+v", r)
+					}
+					var payload, uri string
+					switch r.URL.Path {
+					case "/api/v5/market/tickers":
+						uri = "/api/v5/market/tickers?instType=SWAP&uly=BTC-USDT"
+						payload = `{"code":"0","msg":"ok","data":[{"instId":"BTC-USDT-SWAP","bidPx":"` + price + `","bidSz":"` + size + `","askPx":"` + trailing + `","askSz":"9007199254740993.123456789"}]}`
+					case "/api/v5/market/books":
+						uri = "/api/v5/market/books?instId=BTC-USDT-SWAP&sz=5"
+						payload = `{"code":"0","msg":"ok","data":[{"asks":[["` + price + `","` + size + `","0","17"]],"bids":[["` + trailing + `","0.00000000","2","3"]]}]}`
+					default:
+						t.Fatalf("unexpected endpoint: %s", r.URL.Path)
+					}
+					if r.URL.RequestURI() != uri {
+						t.Errorf("URI = %s, want %s", r.URL.RequestURI(), uri)
+					}
+					body := &trackedBody{Reader: strings.NewReader(payload)}
+					bodies = append(bodies, body)
+					return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+				})})
+			tickerReq := market.GetTickers{InstType: okex.SwapInstrument, Uly: "BTC-USDT"}
+			var tickers marketresponses.Ticker
+			var err error
+			if legacy {
+				tickers, err = client.Market.GetTickers(tickerReq)
+			} else {
+				tickers, err = client.Market.GetTickersWithContext(ctx, tickerReq)
+			}
+			if err != nil || len(tickers.Tickers) != 1 {
+				t.Fatalf("tickers = %+v, err = %v", tickers, err)
+			}
+			ticker := tickers.Tickers[0]
+			if ticker.BidPx != price || ticker.BidSz != size || ticker.AskPx != trailing || ticker.AskSz != "9007199254740993.123456789" {
+				t.Errorf("ticker decimals changed: %+v", ticker)
+			}
+			bookReq := market.GetOrderBook{InstID: "BTC-USDT-SWAP", Sz: 5}
+			var books marketresponses.OrderBook
+			if legacy {
+				books, err = client.Market.GetOrderBook(bookReq)
+			} else {
+				books, err = client.Market.GetOrderBookWithContext(ctx, bookReq)
+			}
+			if err != nil || len(books.OrderBooks) != 1 {
+				t.Fatalf("books = %+v, err = %v", books, err)
+			}
+			book := books.OrderBooks[0]
+			if len(book.Asks) != 1 || len(book.Bids) != 1 {
+				t.Fatalf("unexpected levels: %+v", book)
+			}
+			ask, bid := book.Asks[0], book.Bids[0]
+			if ask.DepthPrice != price || ask.Size != size || ask.OrderNumbers != 17 || bid.DepthPrice != trailing || bid.Size != "0.00000000" || bid.LiquidatedOrder != 2 || bid.OrderNumbers != 3 {
+				t.Errorf("order book values changed: ask=%+v bid=%+v", ask, bid)
+			}
+			if tickers.Code != 0 || tickers.Msg != "ok" || books.Code != 0 || books.Msg != "ok" {
+				t.Error("response code/msg lost")
+			}
+			if len(bodies) != 2 {
+				t.Errorf("request count = %d, want 2", len(bodies))
+			}
+			for _, body := range bodies {
+				if !body.closed {
+					t.Error("response body was not closed")
+				}
+			}
+		})
+	}
+}
+
+// Both endpoint adapters return their envelope even when parsing fails, allowing
+// the same error and cancellation cases to exercise each public method.
+var marketQueries = []struct {
+	name string
+	call func(*rest.ClientRest, context.Context, bool) (responses.Basic, int, error)
+}{
+	{"tickers", func(c *rest.ClientRest, ctx context.Context, legacy bool) (responses.Basic, int, error) {
+		req := market.GetTickers{InstType: okex.SwapInstrument}
+		if legacy {
+			r, err := c.Market.GetTickers(req)
+			return r.Basic, len(r.Tickers), err
+		}
+		r, err := c.Market.GetTickersWithContext(ctx, req)
+		return r.Basic, len(r.Tickers), err
+	}},
+	{"order book", func(c *rest.ClientRest, ctx context.Context, legacy bool) (responses.Basic, int, error) {
+		req := market.GetOrderBook{InstID: "BTC-USDT-SWAP"}
+		if legacy {
+			r, err := c.Market.GetOrderBook(req)
+			return r.Basic, len(r.OrderBooks), err
+		}
+		r, err := c.Market.GetOrderBookWithContext(ctx, req)
+		return r.Basic, len(r.OrderBooks), err
+	}},
+}
+
+func TestMarketQueryErrorsAndBodyClosure(t *testing.T) {
+	readErr := errors.New("response interrupted")
+	for _, query := range marketQueries {
+		for _, legacy := range []bool{false, true} {
+			for _, tt := range []struct {
+				name, payload string
+				status        int
+			}{
+				{"business error", `{"code":"51000","msg":"Invalid request","data":[]}`, 200},
+				{"business error without data", `{"code":"51000","msg":"Invalid request"}`, 200},
+				{"HTTP error", `{"code":"0","data":[]}`, 503},
+				{"malformed JSON", `{"code":"0","data":[`, 200},
+				{"trailing JSON", `{"code":"0","data":[]} {}`, 200},
+				{"missing code", `{"data":[]}`, 200},
+				{"null code", `{"code":null,"data":[]}`, 200},
+				{"invalid code", `{"code":"wrong","data":[]}`, 200},
+				{"missing data", `{"code":"0"}`, 200},
+				{"null data", `{"code":"0","data":null}`, 200},
+				{"object data", `{"code":"0","data":{}}`, 200},
+				{"numeric decimal", `{"code":"0","data":[{"bidPx":1.23,"asks":[[1.23,"1","0","1"]]}]}`, 200},
+				{"read failure", "", 200},
+				{"empty body", "", 200},
+				{"empty list", `{"code":"0","data":[]}`, 200},
+			} {
+				t.Run(fmt.Sprintf("%s/legacy=%t/%s", query.name, legacy, tt.name), func(t *testing.T) {
+					var reader io.Reader = strings.NewReader(tt.payload)
+					if tt.name == "read failure" {
+						reader = failingReader{readErr}
+					}
+					body := &trackedBody{Reader: reader}
+					client := rest.NewClient("", "", "", "https://example.test", okex.NormalServer,
+						&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+							return &http.Response{StatusCode: tt.status, Body: body}, nil
+						})})
+					basic, count, err := query.call(client, context.Background(), legacy)
+					if !body.closed {
+						t.Error("response body was not closed")
+					}
+					if tt.name == "empty list" {
+						if err != nil || count != 0 {
+							t.Fatalf("empty list: count=%d error=%v", count, err)
+						}
+						return
+					}
+					if err == nil || count != 0 {
+						t.Fatalf("count=%d error=%v; want error without data", count, err)
+					}
+					if strings.HasPrefix(tt.name, "business error") {
+						var apiErr *rest.APIError
+						if !errors.As(err, &apiErr) || apiErr.Code != 51000 || apiErr.Msg != "Invalid request" || basic.Code != apiErr.Code || basic.Msg != apiErr.Msg {
+							t.Errorf("business code/msg lost: response=%+v error=%v", basic, err)
+						}
+					}
+					if tt.name == "HTTP error" {
+						var httpErr *rest.HTTPError
+						if !errors.As(err, &httpErr) || httpErr.StatusCode != tt.status {
+							t.Errorf("HTTP status lost: %v", err)
+						}
+					}
+					if tt.name == "read failure" && !errors.Is(err, readErr) {
+						t.Errorf("read error lost: %v", err)
+					}
+				})
+			}
+		}
+	}
+}
+
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+func TestMarketQueryCancellationAndTimeout(t *testing.T) {
+	for _, query := range marketQueries {
+		for _, bodyRead := range []bool{false, true} {
+			for _, timeout := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/body=%t/timeout=%t", query.name, bodyRead, timeout), func(t *testing.T) {
+					ctx, cancel := context.WithCancel(context.Background())
+					want := context.Canceled
+					if timeout {
+						cancel()
+						ctx, cancel = context.WithTimeout(context.Background(), 30*time.Millisecond)
+						want = context.DeadlineExceeded
+					}
+					defer cancel()
+					var body *trackedBody
+					client := rest.NewClient("", "", "", "https://example.test", okex.NormalServer,
+						&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+							if r.Context().Done() == nil { // Subsequent legacy call must be independent.
+								return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"code":"0","data":[]}`))}, nil
+							}
+							if !timeout {
+								cancel()
+							}
+							if bodyRead {
+								body = &trackedBody{Reader: contextBody{r.Context()}}
+								return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+							}
+							<-r.Context().Done()
+							return nil, r.Context().Err()
+						})})
+					result := make(chan error, 1)
+					go func() { _, _, err := query.call(client, ctx, false); result <- err }()
+					select {
+					case err := <-result:
+						if !errors.Is(err, want) {
+							t.Fatalf("error=%v, want %v", err, want)
+						}
+					case <-time.After(2 * time.Second):
+						t.Fatal("request did not stop")
+					}
+					if bodyRead && (body == nil || !body.closed) {
+						t.Error("cancelled response body was not closed")
+					}
+					if _, _, err := query.call(client, context.Background(), true); err != nil {
+						t.Fatalf("legacy call after cancellation: %v", err)
+					}
+				})
+			}
+		}
 	}
 }
