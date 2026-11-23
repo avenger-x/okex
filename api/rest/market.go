@@ -101,15 +101,18 @@ func (c *Market) GetOrderBookWithContext(ctx context.Context, req requests.GetOr
 //
 // https://www.okex.com/docs-v5/en/#rest-api-market-data-get-candlesticks
 func (c *Market) GetCandlesticks(req requests.GetCandlesticks) (response responses.Candle, err error) {
+	return c.GetCandlesticksWithContext(context.Background(), req)
+}
+
+// GetCandlesticksWithContext retrieves trade candles with request-scoped cancellation.
+func (c *Market) GetCandlesticksWithContext(ctx context.Context, req requests.GetCandlesticks) (response responses.Candle, err error) {
 	p := "/api/v5/market/candles"
 	m := okex.S2M(req)
-	res, err := c.client.Do(http.MethodGet, p, false, m)
+	res, err := c.client.DoWithContext(ctx, http.MethodGet, p, false, m)
 	if err != nil {
 		return
 	}
-	defer res.Body.Close()
-	d := json.NewDecoder(res.Body)
-	err = d.Decode(&response)
+	err = decodeListResponse(res, &response.Basic, &response.Candles)
 	return
 }
 
@@ -118,15 +121,18 @@ func (c *Market) GetCandlesticks(req requests.GetCandlesticks) (response respons
 //
 // https://www.okex.com/docs-v5/en/#rest-api-market-data-get-candlesticks
 func (c *Market) GetCandlesticksHistory(req requests.GetCandlesticks) (response responses.Candle, err error) {
+	return c.GetCandlesticksHistoryWithContext(context.Background(), req)
+}
+
+// GetCandlesticksHistoryWithContext retrieves historical trade candles with request-scoped cancellation.
+func (c *Market) GetCandlesticksHistoryWithContext(ctx context.Context, req requests.GetCandlesticks) (response responses.Candle, err error) {
 	p := "/api/v5/market/history-candles"
 	m := okex.S2M(req)
-	res, err := c.client.Do(http.MethodGet, p, false, m)
+	res, err := c.client.DoWithContext(ctx, http.MethodGet, p, false, m)
 	if err != nil {
 		return
 	}
-	defer res.Body.Close()
-	d := json.NewDecoder(res.Body)
-	err = d.Decode(&response)
+	err = decodeListResponse(res, &response.Basic, &response.Candles)
 	return
 }
 

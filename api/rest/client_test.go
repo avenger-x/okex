@@ -377,7 +377,7 @@ func TestMarketQueriesPreservePrecisionAndLegacyCalls(t *testing.T) {
 	}
 }
 
-// Both endpoint adapters return their envelope even when parsing fails, allowing
+// Endpoint adapters return their envelope even when parsing fails, allowing
 // the same error and cancellation cases to exercise each public method.
 var marketQueries = []struct {
 	name string
@@ -401,6 +401,24 @@ var marketQueries = []struct {
 		r, err := c.Market.GetOrderBookWithContext(ctx, req)
 		return r.Basic, len(r.OrderBooks), err
 	}},
+	{"candlesticks", func(c *rest.ClientRest, ctx context.Context, legacy bool) (responses.Basic, int, error) {
+		req := market.GetCandlesticks{InstID: "BTC-USDT"}
+		if legacy {
+			r, err := c.Market.GetCandlesticks(req)
+			return r.Basic, len(r.Candles), err
+		}
+		r, err := c.Market.GetCandlesticksWithContext(ctx, req)
+		return r.Basic, len(r.Candles), err
+	}},
+	{"historical candlesticks", func(c *rest.ClientRest, ctx context.Context, legacy bool) (responses.Basic, int, error) {
+		req := market.GetCandlesticks{InstID: "BTC-USDT"}
+		if legacy {
+			r, err := c.Market.GetCandlesticksHistory(req)
+			return r.Basic, len(r.Candles), err
+		}
+		r, err := c.Market.GetCandlesticksHistoryWithContext(ctx, req)
+		return r.Basic, len(r.Candles), err
+	}},
 }
 
 func TestMarketQueryErrorsAndBodyClosure(t *testing.T) {
@@ -422,6 +440,7 @@ func TestMarketQueryErrorsAndBodyClosure(t *testing.T) {
 				{"missing data", `{"code":"0"}`, 200},
 				{"null data", `{"code":"0","data":null}`, 200},
 				{"object data", `{"code":"0","data":{}}`, 200},
+				{"null row", `{"code":"0","data":[null]}`, 200},
 				{"numeric decimal", `{"code":"0","data":[{"bidPx":1.23,"asks":[[1.23,"1","0","1"]]}]}`, 200},
 				{"read failure", "", 200},
 				{"empty body", "", 200},
@@ -523,5 +542,204 @@ func TestMarketQueryCancellationAndTimeout(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestCandleQueriesPrecisionAndLegacyCalls(t *testing.T) {
+	const row = `["1630048897897","0.000000000123456789","123456789.123456789","0.00000000000000000001","1.23000000","9007199254740993.123456789","0.00000000","12345678901234567890.1234567890000",%q]`
+	for _, history := range []bool{false, true} {
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("history=%t/legacy=%t", history, legacy), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				body := &trackedBody{Reader: strings.NewReader(`{"code":"0","msg":"ok","data":[` + fmt.Sprintf(row, "0") + `,` + fmt.Sprintf(row, "1") + `]}`)}
+				calls := 0
+				client := rest.NewClient("key", "secret", "pass", "https://example.test", okex.NormalServer, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					calls++
+					wantCtx := ctx
+					if legacy {
+						wantCtx = context.Background()
+					}
+					if r.Context() != wantCtx {
+						t.Error("incorrect request context")
+					}
+					path := "/api/v5/market/candles"
+					if history {
+						path = "/api/v5/market/history-candles"
+					}
+					wantURI := path + "?after=1630048897897&bar=1m&before=1630048800000&instId=BTC-USDT&limit=2"
+					if r.Method != http.MethodGet || r.URL.RequestURI() != wantURI || r.Header.Get("OK-ACCESS-KEY") != "" {
+						t.Errorf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+				})})
+				req := market.GetCandlesticks{InstID: "BTC-USDT", After: 1630048897897, Before: 1630048800000, Limit: 2, Bar: okex.BarSize("1m")}
+				var response marketresponses.Candle
+				var err error
+				if history {
+					if legacy {
+						response, err = client.Market.GetCandlesticksHistory(req)
+					} else {
+						response, err = client.Market.GetCandlesticksHistoryWithContext(ctx, req)
+					}
+				} else {
+					if legacy {
+						response, err = client.Market.GetCandlesticks(req)
+					} else {
+						response, err = client.Market.GetCandlesticksWithContext(ctx, req)
+					}
+				}
+				if !body.closed || calls != 1 {
+					t.Errorf("body closed=%t, calls=%d", body.closed, calls)
+				}
+				if err != nil || len(response.Candles) != 2 {
+					t.Fatalf("response=%+v, error=%v", response, err)
+				}
+				if response.Code != 0 || response.Msg != "ok" {
+					t.Errorf("code/msg lost: %+v", response.Basic)
+				}
+				for i, candle := range response.Candles {
+					if candle == nil {
+						t.Fatal("nil candle")
+					}
+					if got, want := [8]string{candle.O, candle.H, candle.L, candle.C, candle.Vol, candle.VolCcy, candle.VolCcyQuote, candle.Confirm}, [8]string{"0.000000000123456789", "123456789.123456789", "0.00000000000000000001", "1.23000000", "9007199254740993.123456789", "0.00000000", "12345678901234567890.1234567890000", fmt.Sprint(i)}; got != want {
+						t.Errorf("candle fields=%q, want %q", got, want)
+					}
+					if got := time.Time(candle.TS).UnixMilli(); got != 1630048897897 {
+						t.Errorf("timestamp=%d", got)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestMarketQueryContextsAreIsolated(t *testing.T) {
+	for _, query := range marketQueries {
+		t.Run(query.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			started := make(chan struct{})
+			client := rest.NewClient("", "", "", "https://example.test", okex.NormalServer, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Context() == ctx {
+					close(started)
+					<-r.Context().Done()
+					return nil, r.Context().Err()
+				}
+				if err := r.Context().Err(); err != nil {
+					return nil, err
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"code":"0","data":[]}`))}, nil
+			})})
+			result := make(chan error, 1)
+			go func() { _, _, err := query.call(client, ctx, false); result <- err }()
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("request did not start")
+			}
+			otherCtx, otherCancel := context.WithTimeout(context.Background(), time.Second)
+			defer otherCancel()
+			if _, _, err := query.call(client, otherCtx, false); err != nil {
+				t.Fatalf("independent request failed: %v", err)
+			}
+			cancel()
+			select {
+			case err := <-result:
+				if !errors.Is(err, context.Canceled) {
+					t.Errorf("error=%v, want context.Canceled", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("cancelled request did not exit")
+			}
+			if _, _, err := query.call(client, otherCtx, false); err != nil {
+				t.Errorf("cancellation leaked to other context: %v", err)
+			}
+			if _, _, err := query.call(client, context.Background(), true); err != nil {
+				t.Errorf("cancellation leaked to legacy method: %v", err)
+			}
+		})
+	}
+}
+
+func TestCandleQueriesRejectInvalidRows(t *testing.T) {
+	const valid = `["1630048897897","1.23000000","2","1","2","10","20","30","1"]`
+	for _, history := range []bool{false, true} {
+		for _, row := range []string{
+			`["1630048897897","1","2","1","2","10","20"]`,
+			`["1630048897897","1","2","1","2","10","20","30"]`,
+			`["1630048897897","1","2","1","2","10","20","30","1","extra"]`,
+			`["1630048897897","1","2","1","2","10","20",30,"1"]`,
+			`["1630048897897","1","2","1","2","10","20","30",1]`,
+			`["1630048897897","1","2","1","2","10","20",null,"1"]`,
+			`["1630048897897","1","2","1","2","10","20","30","2"]`,
+			`["invalid","1","2","1","2","10","20","30","1"]`,
+			`null`,
+		} {
+			t.Run(fmt.Sprintf("history=%t/%s", history, row), func(t *testing.T) {
+				body := &trackedBody{Reader: strings.NewReader(`{"code":"0","msg":"ok","data":[` + valid + `,` + row + `]}`)}
+				client := rest.NewClient("", "", "", "https://example.test", okex.NormalServer, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+				})})
+				var response marketresponses.Candle
+				var err error
+				if history {
+					response, err = client.Market.GetCandlesticksHistoryWithContext(context.Background(), market.GetCandlesticks{InstID: "BTC-USDT"})
+				} else {
+					response, err = client.Market.GetCandlesticksWithContext(context.Background(), market.GetCandlesticks{InstID: "BTC-USDT"})
+				}
+				if err == nil || response.Candles != nil {
+					t.Fatalf("bad row exposed partial success: %+v, %v", response, err)
+				}
+				if !body.closed {
+					t.Error("response body was not closed")
+				}
+				if response.Code != 0 || response.Msg != "ok" {
+					t.Error("response metadata was lost")
+				}
+			})
+		}
+	}
+}
+
+func TestIndexAndMarkPriceCandleQueriesRemainIndependent(t *testing.T) {
+	for _, markPrice := range []bool{false, true} {
+		t.Run(fmt.Sprintf("markPrice=%t", markPrice), func(t *testing.T) {
+			body := &trackedBody{Reader: strings.NewReader(`{"code":"0","data":[["1630048897897","1.25","2.5","1","2"]]}`)}
+			client := rest.NewClient("", "", "", "https://example.test", okex.NormalServer, &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				path := "/api/v5/market/index-candles"
+				if markPrice {
+					path = "/api/v5/market/mark-price-candles"
+				}
+				if r.URL.Path != path {
+					t.Errorf("path=%s, want %s", r.URL.Path, path)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
+			})})
+			req := market.GetCandlesticks{InstID: "BTC-USDT"}
+			var o, h, l, closePx float64
+			var ts okex.JSONTime
+			if markPrice {
+				response, err := client.Market.GetMarkPriceCandlesticks(req)
+				if err != nil || len(response.Candles) != 1 {
+					t.Fatalf("response=%+v, error=%v", response, err)
+				}
+				c := response.Candles[0]
+				o, h, l, closePx, ts = c.O, c.H, c.L, c.C, c.TS
+			} else {
+				response, err := client.Market.GetIndexCandlesticks(req)
+				if err != nil || len(response.Candles) != 1 {
+					t.Fatalf("response=%+v, error=%v", response, err)
+				}
+				c := response.Candles[0]
+				o, h, l, closePx, ts = c.O, c.H, c.L, c.C, c.TS
+			}
+			if o != 1.25 || h != 2.5 || l != 1 || closePx != 2 || time.Time(ts).UnixMilli() != 1630048897897 {
+				t.Error("index/mark price candle decoding regressed")
+			}
+			if !body.closed {
+				t.Error("response body was not closed")
+			}
+		})
 	}
 }

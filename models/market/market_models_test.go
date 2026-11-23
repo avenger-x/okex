@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/amir-the-h/okex/events/public"
 	"github.com/amir-the-h/okex/models/market"
@@ -157,6 +158,94 @@ func TestOrderBookResponsesPreservePrecision(t *testing.T) {
 			checkLevels(t, "bids", event.Books[0].Bids, wantBids)
 			if event.Action != action || event.Books[0].Checksum != 1234 {
 				t.Errorf("unexpected event metadata: action=%q, checksum=%d", event.Action, event.Books[0].Checksum)
+			}
+		})
+	}
+}
+
+func TestCandlePreservesNineColumns(t *testing.T) {
+	const (
+		o        = "0.000000000123456789"
+		h        = "123456789.123456789"
+		l        = "0.000000000000000000001"
+		closePx  = "1.23000000"
+		vol      = "9007199254740993.123456789"
+		volCcy   = "0.00000000"
+		volQuote = "12345678901234567890.1234567890000"
+	)
+	for _, timestamp := range []int64{1630048897897, 9007199254740993} {
+		for _, confirm := range []string{"0", "1"} {
+			t.Run(fmt.Sprintf("ts=%d/confirm=%s", timestamp, confirm), func(t *testing.T) {
+				row := fmt.Sprintf(`[%q,%q,%q,%q,%q,%q,%q,%q,%q]`, fmt.Sprint(timestamp), o, h, l, closePx, vol, volCcy, volQuote, confirm)
+				var candle market.Candle
+				if err := json.Unmarshal([]byte(row), &candle); err != nil {
+					t.Fatal(err)
+				}
+				want := market.Candle{O: o, H: h, L: l, C: closePx, Vol: vol, VolCcy: volCcy, VolCcyQuote: volQuote, Confirm: confirm}
+				want.TS = candle.TS
+				if candle != want {
+					t.Errorf("candle = %+v, want %+v", candle, want)
+				}
+				if got := time.Time(candle.TS).UnixMilli(); got != timestamp {
+					t.Errorf("timestamp = %d, want %d", got, timestamp)
+				}
+			})
+		}
+	}
+}
+
+func TestCandleRejectsInvalidRows(t *testing.T) {
+	valid := []interface{}{"1630048897897", "1.23000000", "2", "1", "2", "10", "20", "30", "1"}
+	type rowCase struct {
+		name string
+		data []byte
+	}
+	tests := []rowCase{
+		{"malformed JSON", []byte(`["1630048897897"`)},
+		{"object", []byte(`{}`)},
+		{"null row", []byte(`null`)},
+		{"empty array", []byte(`[]`)},
+	}
+	for _, count := range []int{5, 7, 8, 10} {
+		fields := append(append([]interface{}{}, valid...), "extra")[:count]
+		row, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tests = append(tests, rowCase{fmt.Sprintf("%d columns", count), row})
+	}
+	for i := range valid {
+		for _, value := range []interface{}{nil, 123, true} {
+			fields := append([]interface{}{}, valid...)
+			fields[i] = value
+			row, err := json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tests = append(tests, rowCase{fmt.Sprintf("column %d type %T", i, value), row})
+		}
+	}
+	for _, timestamp := range []string{"", "invalid", "1630048897897.5", "9223372036854775808"} {
+		fields := append([]interface{}{}, valid...)
+		fields[0] = timestamp
+		row, _ := json.Marshal(fields)
+		tests = append(tests, rowCase{"timestamp=" + timestamp, row})
+	}
+	for _, confirm := range []string{"", "2", "true", "1.0"} {
+		fields := append([]interface{}{}, valid...)
+		fields[8] = confirm
+		row, _ := json.Marshal(fields)
+		tests = append(tests, rowCase{"confirm=" + confirm, row})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candle := market.Candle{O: "previous open", VolCcyQuote: "previous quote", Confirm: "1"}
+			before := candle
+			if err := candle.UnmarshalJSON(tt.data); err == nil {
+				t.Fatal("invalid row was accepted")
+			}
+			if candle != before {
+				t.Errorf("failed decoding changed the receiver: %+v", candle)
 			}
 		})
 	}

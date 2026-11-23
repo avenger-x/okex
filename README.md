@@ -169,6 +169,18 @@ the response's `Code` and `Msg`; HTTP failures and malformed responses also retu
 These fields retain tiny prices, large quantities, and trailing zeros, including `"0.000000000123456789"`,
 `"123456789.123456789"`, and `"1.23000000"`. Code using these four fields as numbers must now handle strings.
 
+Trade candles use the same nine-column `market.Candle` model for current REST candles, historical REST candles,
+and WebSocket candlesticks: `[ts,o,h,l,c,vol,volCcy,volCcyQuote,confirm]`. `O`, `H`, `L`, `C`, `Vol`, `VolCcy`, and
+`VolCcyQuote` preserve the original decimal strings, including trailing zeros. `Confirm` preserves `"0"` for an
+unfinished candle and `"1"` for a completed candle. `TS` remains `okex.JSONTime`, parsed from integer milliseconds.
+Malformed rows, missing/extra columns, null fields, and invalid completion flags return parsing errors.
+
+`Market.GetCandlesticksWithContext(ctx, req)` and `Market.GetCandlesticksHistoryWithContext(ctx, req)` use the
+existing `GetCandlesticks` request and `responses/market.Candle` response. Both handle response-body cleanup and
+return HTTP, parsing, and exchange errors, preserving `Code` and `Msg`. The original query methods delegate with
+`context.Background()`. Callers previously doing arithmetic on candle decimals must now handle strings explicitly.
+Index and mark-price candles continue to use the separate `IndexCandle` model.
+
 Supporting APIs
 ---------------
 
@@ -192,7 +204,7 @@ Supporting APIs
 Features
 --------
 
-* [Requests](/requests), [responses](/responses), and [events](events) use typed models. Order book levels, ticker bid/ask quotes,
+* [Requests](/requests), [responses](/responses), and [events](events) use typed models. Trade candle decimals, order book levels, ticker bid/ask quotes,
   account and position decimals, and contract value and multiplier preserve the original strings.
 * Fully automated authorization steps for both [REST](/api/rest) and [WS](/api/ws)
 * To receive websocket events you can choose [RawEventChan](/api/ws/client.go#L25)

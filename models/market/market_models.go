@@ -3,9 +3,10 @@ package market
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/amir-the-h/okex"
 	"strconv"
 	"time"
+
+	"github.com/amir-the-h/okex"
 )
 
 type (
@@ -57,13 +58,15 @@ type (
 		OrderNumbers    int
 	}
 	Candle struct {
-		O      float64
-		H      float64
-		L      float64
-		C      float64
-		Vol    float64
-		VolCcy float64
-		TS     okex.JSONTime
+		O           string
+		H           string
+		L           string
+		C           string
+		Vol         string
+		VolCcy      string
+		VolCcyQuote string
+		Confirm     string
+		TS          okex.JSONTime
 	}
 	IndexCandle struct {
 		O  float64
@@ -129,56 +132,38 @@ func (o *OrderBookEntity) UnmarshalJSON(buf []byte) error {
 }
 
 func (c *Candle) UnmarshalJSON(buf []byte) error {
-	var (
-		o, h, l, cl, vol, volCcy, ts string
-		err                          error
-	)
-	tmp := []interface{}{&ts, &o, &h, &l, &cl, &vol, &volCcy}
-	wantLen := len(tmp)
-	if err := json.Unmarshal(buf, &tmp); err != nil {
+	// Pointers distinguish JSON null from an empty string, while decoding into
+	// strings rejects numeric fields instead of silently converting decimals.
+	var fields []*string
+	if err := json.Unmarshal(buf, &fields); err != nil {
 		return err
 	}
-
-	if g, e := len(tmp), wantLen; g != e {
-		return fmt.Errorf("wrong number of fields in Candle: %d != %d", g, e)
+	if len(fields) != 9 {
+		return fmt.Errorf("wrong number of fields in Candle: %d != 9", len(fields))
 	}
-
-	timestamp, err := strconv.ParseInt(ts, 10, 64)
+	for i, field := range fields {
+		if field == nil {
+			return fmt.Errorf("null field in Candle at column %d", i)
+		}
+	}
+	timestamp, err := strconv.ParseInt(*fields[0], 10, 64)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid Candle timestamp: %w", err)
 	}
-	*(*time.Time)(&c.TS) = time.UnixMilli(timestamp)
-
-	c.O, err = strconv.ParseFloat(o, 64)
-	if err != nil {
-		return err
+	if *fields[8] != "0" && *fields[8] != "1" {
+		return fmt.Errorf("invalid Candle confirm: %q", *fields[8])
 	}
-
-	c.H, err = strconv.ParseFloat(h, 64)
-	if err != nil {
-		return err
+	*c = Candle{
+		TS:          okex.JSONTime(time.UnixMilli(timestamp)),
+		O:           *fields[1],
+		H:           *fields[2],
+		L:           *fields[3],
+		C:           *fields[4],
+		Vol:         *fields[5],
+		VolCcy:      *fields[6],
+		VolCcyQuote: *fields[7],
+		Confirm:     *fields[8],
 	}
-
-	c.L, err = strconv.ParseFloat(l, 64)
-	if err != nil {
-		return err
-	}
-
-	c.C, err = strconv.ParseFloat(cl, 64)
-	if err != nil {
-		return err
-	}
-
-	c.Vol, err = strconv.ParseFloat(vol, 64)
-	if err != nil {
-		return err
-	}
-
-	c.VolCcy, err = strconv.ParseFloat(volCcy, 64)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 

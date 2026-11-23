@@ -725,3 +725,69 @@ func TestRejectedLoginDoesNotAuthorize(t *testing.T) {
 		t.Fatal("rejected login marked client authorized")
 	}
 }
+
+func TestCandleEventDispatchPreservesNineColumns(t *testing.T) {
+	c := NewClient(context.Background(), "", "", "", nil)
+	defer c.Close()
+	candles := make(chan *publicevents.Candlesticks, 1)
+	c.Public.cCh = candles
+	for _, confirm := range []string{"0", "1"} {
+		data := []byte(fmt.Sprintf(`{"arg":{"channel":"candle1m","instId":"BTC-USDT"},"data":[["1630048897897","0.000000000123456789","123456789.123456789","0.00000000000000000001","1.23000000","9007199254740993.123456789","0.00000000","12345678901234567890.1234567890000",%q]]}`, confirm))
+		var basic events.Basic
+		if err := json.Unmarshal(data, &basic); err != nil {
+			t.Fatal(err)
+		}
+		if !c.process(c.ctx, data, &basic) {
+			t.Fatal("candle event was not recognized")
+		}
+		event := receive(t, candles)
+		if len(event.Candles) != 1 || event.Candles[0] == nil {
+			t.Fatalf("missing candle: %+v", event)
+		}
+		candle := event.Candles[0]
+		if got, want := [8]string{candle.O, candle.H, candle.L, candle.C, candle.Vol, candle.VolCcy, candle.VolCcyQuote, candle.Confirm}, [8]string{"0.000000000123456789", "123456789.123456789", "0.00000000000000000001", "1.23000000", "9007199254740993.123456789", "0.00000000", "12345678901234567890.1234567890000", confirm}; got != want {
+			t.Errorf("candle fields=%q, want %q", got, want)
+		}
+		if time.Time(candle.TS).UnixMilli() != 1630048897897 {
+			t.Error("timestamp changed")
+		}
+	}
+}
+
+func TestIndexAndMarkPriceCandleEventDispatch(t *testing.T) {
+	c := NewClient(context.Background(), "", "", "", nil)
+	defer c.Close()
+	structured := make(chan interface{}, 1)
+	c.SetEventChannels(structured, nil)
+	for _, channel := range []string{"index-candle1m", "mark-price-candle1m"} {
+		data := []byte(fmt.Sprintf(`{"arg":{"channel":%q,"instId":"BTC-USDT"},"data":[["1630048897897","1.25","2.5","1","2"]]}`, channel))
+		var basic events.Basic
+		if err := json.Unmarshal(data, &basic); err != nil {
+			t.Fatal(err)
+		}
+		if !c.process(c.ctx, data, &basic) {
+			t.Fatalf("%s was not recognized", channel)
+		}
+		var o, h, l, closePx float64
+		var ts okex.JSONTime
+		switch event := receive(t, structured).(type) {
+		case publicevents.IndexCandlesticks:
+			if channel != "index-candle1m" || len(event.Rates) != 1 {
+				t.Fatalf("unexpected index event: %+v", event)
+			}
+			candle := event.Rates[0]
+			o, h, l, closePx, ts = candle.O, candle.H, candle.L, candle.C, candle.TS
+		case publicevents.MarkPriceCandlesticks:
+			if channel != "mark-price-candle1m" || len(event.Prices) != 1 {
+				t.Fatalf("unexpected mark price event: %+v", event)
+			}
+			candle := event.Prices[0]
+			o, h, l, closePx, ts = candle.O, candle.H, candle.L, candle.C, candle.TS
+		default:
+			t.Fatalf("unexpected event type: %T", event)
+		}
+		if o != 1.25 || h != 2.5 || l != 1 || closePx != 2 || time.Time(ts).UnixMilli() != 1630048897897 {
+			t.Errorf("%s decoding regressed", channel)
+		}
+	}
+}

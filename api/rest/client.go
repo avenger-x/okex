@@ -151,7 +151,7 @@ func (e *APIError) Error() string {
 
 // decodeListResponse validates the response envelope as well as its typed data,
 // so malformed responses cannot be mistaken for a successful empty result.
-func decodeListResponse[T any](res *http.Response, status *responses.Basic, target *[]T) error {
+func decodeListResponse[T any](res *http.Response, status *responses.Basic, target *[]*T) error {
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
@@ -176,9 +176,14 @@ func decodeListResponse[T any](res *http.Response, status *responses.Basic, targ
 	if len(data) == 0 || data[0] != '[' {
 		return fmt.Errorf("decode response: data must be an array")
 	}
-	var items []T
+	var items []*T
 	if err := json.Unmarshal(data, &items); err != nil {
 		return fmt.Errorf("decode response data: %w", err)
+	}
+	for i, item := range items {
+		if item == nil {
+			return fmt.Errorf("decode response data: null item at index %d", i)
+		}
 	}
 	*target = items
 	return nil
